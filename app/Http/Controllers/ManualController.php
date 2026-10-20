@@ -5,6 +5,7 @@ use App\Models\Activity;
 use App\Models\Agent;
 use App\Models\Assignment;
 use App\Models\Setting;
+use App\Services\ConflictService;
 use App\Services\DistributionService;
 use App\Services\ManualSelectionService;
 use Illuminate\Http\Request;
@@ -14,8 +15,12 @@ class ManualController extends Controller
 {
     public function __construct(private ManualSelectionService $svc) {}
 
-    private function activeActs() { return Activity::where('active', true)->orderBy('position')->orderBy('id')->get(); }
-        private function localities()
+    private function activeActs()
+    {
+        return Activity::where('active', true)->orderBy('position')->orderBy('id')->get();
+    }
+
+    private function localities()
     {
         return Agent::whereNotNull('locality')->where('locality', '!=', '')->distinct()->orderBy('locality')->pluck('locality');
     }
@@ -25,15 +30,24 @@ class ManualController extends Controller
     {
         $agents = Agent::all()->sortBy([['type', 'asc'], fn($a, $b) => Str::ascii($a->name) <=> Str::ascii($b->name)])->values();
         $assigned = Assignment::all()->groupBy('agent_id')->map(fn($g) => $g->pluck('activity_id')->all());
-                return view('choix.matrix', ['acts' => $this->activeActs(), 'agents' => $agents, 'assigned' => $assigned, 'localities' => $this->localities()]);
+        return view('choix.matrix', [
+            'acts' => $this->activeActs(),
+            'agents' => $agents,
+            'assigned' => $assigned,
+            'localities' => $this->localities(),
+        ]);
     }
 
     public function toggle(Request $r)
     {
-        $d = $r->validate(['agent_id' => 'required|exists:agents,id', 'activity_id' => 'required|exists:activities,id', 'on' => 'required|boolean']);
+        $d = $r->validate([
+            'agent_id' => 'required|exists:agents,id',
+            'activity_id' => 'required|exists:activities,id',
+            'on' => 'required|boolean',
+        ]);
         $act = Activity::findOrFail($d['activity_id']);
         $was = Assignment::where('agent_id', $d['agent_id'])->where('activity_id', $act->id)->exists();
-        $this->svc->set($act, (int)$d['agent_id'], (bool)$d['on'], $was, (bool)$act->manual);
+        $this->svc->set($act, (int) $d['agent_id'], (bool) $d['on'], $was, (bool) $act->manual);
         return response()->json(['ok' => true]);
     }
 
@@ -50,16 +64,27 @@ class ManualController extends Controller
         $amounts = Activity::all()->keyBy('id');
         $byAgent = Assignment::all()->groupBy('agent_id');
         $agents = Agent::all()->sortBy(fn($a) => Str::upper(Str::ascii($a->name)))->values();
+
+        // activités dont les dates chevauchent celle-ci (vide si pas de date de début)
+        $overlapIds = app(ConflictService::class)->overlappingIds($activity);
+
         $info = [];
         foreach ($agents as $a) {
             $others = ($byAgent[$a->id] ?? collect())->where('activity_id', '!=', $activity->id);
             $info[$a->id] = [
                 'codes' => $others->map(fn($x) => $amounts[$x->activity_id]->code ?? '')->implode(', '),
-                'total' => $others->sum(fn($x) => $amounts[$x->activity_id]->amount ?? 0) + ($hist ? (int)$a->history_amount : 0),
+                'total' => $others->sum(fn($x) => $amounts[$x->activity_id]->amount ?? 0) + ($hist ? (int) $a->history_amount : 0),
+                'conflict' => $others->filter(fn($x) => in_array($x->activity_id, $overlapIds))
+                    ->map(fn($x) => $amounts[$x->activity_id]->code ?? '')->implode(', '),
             ];
         }
+
         return view('choix.activity', [
-            'act' => $activity, 'acts' => $this->activeActs(), 'agents' => $agents, 'info' => $info,
+            'act' => $activity,
+            'acts' => $this->activeActs(),
+            'agents' => $agents,
+            'info' => $info,
+            'localities' => $this->localities(),
             'selected' => Assignment::where('activity_id', $activity->id)->pluck('agent_id')->all(),
         ]);
     }
@@ -76,7 +101,7 @@ class ManualController extends Controller
     {
         $d = $r->validate(['name' => 'required|string|max:255', 'im' => 'nullable|string|max:30', 'locality' => 'nullable|string|max:80']);
         $agent = Agent::create($d + ['type' => 'EXTERNE', 'available' => true]);
-        $this->svc->set($activity, $agent->id, true, false, (bool)$activity->manual);
+        $this->svc->set($activity, $agent->id, true, false, (bool) $activity->manual);
         app(DistributionService::class)->run();
         return redirect()->route('choix.show', $activity)->with('ok', "Agent extérieur « {$agent->name} » ajouté à {$activity->code}.");
     }

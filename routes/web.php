@@ -1,5 +1,5 @@
 <?php
-use App\Http\Controllers\{ActivityController, AgentController, DashboardController, DistributionController, DocumentController, ExceptionController, ManualController, SettingController, VisaController};
+use App\Http\Controllers\{ActivityController, AgentController, ConflictController, DashboardController, DistributionController, DocumentController, ExceptionController, ManualController, SettingController, VisaController};
 use Illuminate\Support\Facades\Route;
 
 // Pour protéger l'application : installer Laravel Breeze puis remplacer [] par ['auth'].
@@ -36,5 +36,10 @@ Route::get('/choix/{activity}', [ManualController::class, 'show'])->name('choix.
 Route::post('/choix/{activity}', [ManualController::class, 'save'])->name('choix.save');
 Route::post('/choix/{activity}/externe', [ManualController::class, 'addExternal'])->name('choix.external');
 Route::post('/choix/{activity}/auto', [ManualController::class, 'auto'])->name('choix.auto');
+
+        Route::get('/conflits', [ConflictController::class, 'index'])->name('conflicts.index');
+    Route::post('/conflits/resoudre', [ConflictController::class, 'resolve'])->name('conflicts.resolve');
+    Route::post('/conflits/ignorer', [ConflictController::class, 'waive'])->name('conflicts.waive');
+    Route::delete('/conflits/ignorer/{waiver}', [ConflictController::class, 'unwaive'])->name('conflicts.unwaive');
 
     });

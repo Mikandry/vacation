@@ -175,12 +175,16 @@ class BalanceService
             ];
         }
 
+        // ---------- conflits de dates ----------
+        $conflictCount = count(app(ConflictService::class)->detect());
+
         // ---------- contrôles ----------
         $ims = $agents->pluck('im')
             ->filter(fn($v) => $v && Str::lower($v) !== 'en cours')
             ->countBy();
 
         $checks = [
+            ['Agents dans 2 activités dont les dates se chevauchent', $conflictCount, 'warn'],
             ['Activités sans quota défini',
                 collect($perAct)->filter(fn($x) => $x['quota'] == 0 && !$x['activity']->manual)->count(), 'warn'],
             ['Activités où le quota n’est pas atteint (manque d’agents éligibles)',
@@ -198,16 +202,17 @@ class BalanceService
         ];
 
         return [
-            'settings' => $s,
-            'rows'     => $rows,
-            'acts'     => $acts,
-            'perAct'   => $perAct,
-            'perSvc'   => $perSvc,
-            'bands'    => $bands,
-            'byCount'  => $byCount,
-            'checks'   => $checks,
-            'verdict'  => $verdict,
-            'stats'    => [
+            'settings'  => $s,
+            'rows'      => $rows,
+            'acts'      => $acts,
+            'perAct'    => $perAct,
+            'perSvc'    => $perSvc,
+            'bands'     => $bands,
+            'byCount'   => $byCount,
+            'checks'    => $checks,
+            'conflicts' => $conflictCount,
+            'verdict'   => $verdict,
+            'stats'     => [
                 'n'           => $n,
                 'assignments' => $base->sum('count'),
                 'sum'         => $base->sum('amount'),

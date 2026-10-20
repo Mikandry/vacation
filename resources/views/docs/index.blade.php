@@ -2,24 +2,48 @@
 @section('title','Documents')
 @section('content')
 <h4>Documents à générer</h4>
-<p class="text-muted small">Pour chaque activité : <b>décision</b>, <b>note de service</b> (modèle de la direction, avec logo), <b>feuille de présence</b> (paysage, une colonne par jour) et <b>état de vacations</b>. Formats : PDF, Word, Excel (pas d’Excel pour la note de service).</p>
-<table class="table table-bordered bg-white align-middle"><thead class="table-dark"><tr><th>Activité</th><th>Agents</th>
+<p class="text-muted small">Pour chaque activité : décision, note de service, <b>feuille de présence</b> (15 jours max par feuille), état de vacations et <b>état de décompte</b> (brut, IRSA, net, avec total de page et report). Formats : PDF, Word, Excel.</p>
+
+<div class="input-group input-group-sm mb-3" style="max-width:280px">
+ <span class="input-group-text">Taux IRSA (%)</span>
+ <input id="irsa" type="number" step="0.1" min="0" max="100" class="form-control" value="{{ $irsa }}">
+</div>
+
+<table class="table table-bordered bg-white align-middle">
+<thead class="table-dark"><tr><th>Activité</th><th>Agents</th>
  @foreach(\App\Services\DocumentExporter::TITLES as $t)<th class="text-center">{{ $t }}</th>@endforeach</tr></thead>
-@foreach($acts as $a)<tr class="{{ $a->active?'':'text-muted' }}">
+@foreach($acts as $a)
+<tr class="{{ $a->active?'':'text-muted' }}">
  <td><b>{{ $a->code }}</b><br><small>{{ $a->name }} — {{ $a->days }} j × {{ number_format($a->rate,0,',',' ') }} Ar</small>
   <br><a class="small" href="{{ route('choix.show',$a) }}">✎ choisir les agents</a></td>
  <td>{{ $a->assignments_count }}</td>
  @foreach(array_keys(\App\Services\DocumentExporter::TITLES) as $t)
  <td class="text-center text-nowrap">
   @if($a->assignments_count)
-   <a class="btn btn-sm btn-outline-danger" href="{{ route('documents.export',[$a,$t,'pdf']) }}">PDF</a>
-   <a class="btn btn-sm btn-outline-primary" href="{{ route('documents.export',[$a,$t,'docx']) }}">Word</a>
-   @if($t !== 'note')<a class="btn btn-sm btn-outline-success" href="{{ route('documents.export',[$a,$t,'xlsx']) }}">Excel</a>@endif
+   @php $u=fn($f)=>route('documents.export',[$a,$t,$f]); @endphp
+   <a class="btn btn-sm btn-outline-danger" @if($t==='decompte') data-dec="{{ $u('pdf') }}" @endif href="{{ $u('pdf') }}">PDF</a>
+   <a class="btn btn-sm btn-outline-primary" @if($t==='decompte') data-dec="{{ $u('docx') }}" @endif href="{{ $u('docx') }}">Word</a>
+   @if($t!=='note')<a class="btn btn-sm btn-outline-success" @if($t==='decompte') data-dec="{{ $u('xlsx') }}" @endif href="{{ $u('xlsx') }}">Excel</a>@endif
+   @if($t==='presence')
+    <div class="small text-muted mt-1">sans dates :
+     <a href="{{ $u('pdf') }}?dates=0">PDF</a> · <a href="{{ $u('docx') }}?dates=0">Word</a> · <a href="{{ $u('xlsx') }}?dates=0">Excel</a></div>
+   @endif
   @else <span class="text-muted small">aucun agent</span>@endif
  </td>
  @endforeach
-</tr>@endforeach
+</tr>
+@endforeach
 </table>
 <a class="btn btn-outline-secondary" href="{{ route('distribution.recap','xlsx') }}">Récapitulatif agents × activités (Excel)</a>
 <a class="btn btn-outline-secondary" href="{{ route('distribution.recap','pdf') }}">Récapitulatif (PDF)</a>
 @endsection
+
+@push('scripts')
+<script>
+const irsa=document.getElementById('irsa');
+function upd(){
+ document.querySelectorAll('a[data-dec]').forEach(a=>{ a.href=a.dataset.dec+'?irsa='+encodeURIComponent(irsa.value); });
+}
+irsa.addEventListener('input',upd); upd();
+</script>
+@endpush

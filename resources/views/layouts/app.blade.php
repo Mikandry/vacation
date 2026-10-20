@@ -25,6 +25,7 @@
    <a class="nav-link" href="{{ route('distribution.index') }}">Répartition</a>
    <a class="nav-link" href="{{ route('choix.matrix') }}">Choix manuel</a>
    <a class="nav-link" href="{{ route('activities.index') }}">Activités</a>
+   <a class="nav-link" href="{{ route('conflicts.index') }}">Conflits</a>
    <a class="nav-link" href="{{ route('agents.index') }}">Agents</a>
    <a class="nav-link" href="{{ route('exceptions.index') }}">Exceptions</a>
    <a class="nav-link" href="{{ route('documents.index') }}">Documents</a>

@@ -11,6 +11,12 @@
  <span class="text-muted small">{{ round($st['pct']) }} % des agents sont à ± {{ $b['settings']['tolerance'] }} % de la moyenne</span>
  <form method="post" action="{{ route('distribution.run') }}" class="ms-auto">@csrf <button class="btn btn-primary">⟳ Relancer la répartition</button></form>
 </div>
+@if($b['conflicts'] > 0)
+<div class="alert alert-danger d-flex align-items-center gap-3">
+ <div><b>{{ $b['conflicts'] }}</b> agent(s) sont désignés dans deux activités dont les dates se chevauchent.</div>
+ <a class="btn btn-danger btn-sm ms-auto" href="{{ route('conflicts.index') }}">Résoudre les conflits</a>
+</div>
+@endif
 <div class="row g-2 mb-3">
  @foreach([['Agents mobilisables',$st['n']],['Affectations (direction)',$st['assignments']],['Montant total (Ar)',$fmt($st['sum'])],['Moyenne / agent (Ar)',$fmt($st['mean'])],['Minimum (Ar)',$fmt($st['min'])],['Maximum (Ar)',$fmt($st['max'])],
   ['Étendue (Ar)',$fmt($st['range'])],['Coeff. de variation',number_format($st['cv']*100,1,',',' ').' %'],['Sur-chargés',$st['over']],['Sous-chargés',$st['under']],['Sans activité',$st['none']]] as [$l,$v])
