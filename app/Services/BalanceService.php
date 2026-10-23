@@ -178,27 +178,29 @@ class BalanceService
         // ---------- conflits de dates ----------
         $conflictCount = count(app(ConflictService::class)->detect());
 
-        // ---------- contrôles ----------
+        // ---------- contrôles : [libellé, nombre, niveau, clé de la page de résolution] ----------
         $ims = $agents->pluck('im')
             ->filter(fn($v) => $v && Str::lower($v) !== 'en cours')
             ->countBy();
 
         $checks = [
-            ['Agents dans 2 activités dont les dates se chevauchent', $conflictCount, 'warn'],
+            ['Agents dans 2 activités dont les dates se chevauchent', $conflictCount, 'warn', 'chevauchement'],
             ['Activités sans quota défini',
-                collect($perAct)->filter(fn($x) => $x['quota'] == 0 && !$x['activity']->manual)->count(), 'warn'],
+                collect($perAct)->filter(fn($x) => $x['quota'] == 0 && !$x['activity']->manual)->count(), 'warn', 'sans_quota'],
             ['Activités où le quota n’est pas atteint (manque d’agents éligibles)',
-                collect($perAct)->filter(fn($x) => str_contains($x['check'], 'non atteint'))->count(), 'warn'],
+                collect($perAct)->filter(fn($x) => str_contains($x['check'], 'non atteint'))->count(), 'warn', 'quota_non_atteint'],
             ['Activités où les forçages dépassent le quota',
-                collect($perAct)->filter(fn($x) => str_contains($x['check'], 'Dépasse'))->count(), 'warn'],
+                collect($perAct)->filter(fn($x) => str_contains($x['check'], 'Dépasse'))->count(), 'warn', 'depasse_quota'],
             ['IM en doublon',
-                $ims->filter(fn($c) => $c > 1)->count(), 'warn'],
+                $ims->filter(fn($c) => $c > 1)->count(), 'warn', 'im_doublon'],
             ['Agents sans IM (ou « en cours »)',
-                $agents->filter(fn($a) => !$a->im || Str::lower($a->im) === 'en cours')->count(), 'info'],
+                $agents->filter(fn($a) => !$a->im || Str::lower($a->im) === 'en cours')->count(), 'info', 'sans_im'],
             ['Agents indisponibles',
-                $agents->where('available', false)->count(), 'info'],
+                $agents->where('available', false)->count(), 'info', 'indisponibles'],
             ['Agents de la direction sans aucune activité',
-                $base->where('count', 0)->count(), 'warn'],
+                $base->where('count', 0)->count(), 'warn', 'sans_activite'],
+            ['Activités dont le total diffère du décret',
+                collect($perAct)->filter(fn($x) => $x['decree'] > 0 && $x['total'] != $x['decree'])->count(), 'info', 'ecart_decret'],
         ];
 
         return [

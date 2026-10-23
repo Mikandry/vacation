@@ -33,12 +33,14 @@ class Setting extends Model
         'threshold_acc' => '70',
         'band_step' => '250000',
 
-        'show_flag' => 'OUI',
+        // logo : toujours tout en haut de chaque document
+        'show_logo' => 'OUI',
         'republic' => "REPOBLIKAN'I MADAGASIKARA",
         'motto' => 'Fitiavana - Tanindrazana - Fandrosoana',
+        'doc_header' => "MINISTERE DE L’EDUCATION NATIONALE\n------\nSECRETARIAT GENERAL\n-----\nDIRECTION GENERALE EN CHARGE\nDES ETABLISSEMENTS SCOLAIRES\n---------\nDIRECTION DES EXAMENS\nET DE LA CERTIFICATION\n------",
 
+        'note_logo_position' => 'HAUT',   // HAUT = logo centré au-dessus de tout ; COTE = dans la colonne de droite (modèle d'origine)
         'note_font' => 'Book Antiqua',
-        'note_show_logo' => 'OUI',
         'note_header_left' => "MINISTERE DE L’EDUCATION NATIONALE\n------\nSECRETARIAT GENERAL\n-----\nDIRECTION GENERALE EN CHARGE\nDES ETABLISSEMENTS SCOLAIRES\n---------\nDIRECTION DES EXAMENS\nET DE LA CERTIFICATION\n------",
         'note_title' => 'NOTE DE SERVICE',
         'note_number' => 'N°2026/549MEN/SG/DGES/DEXAMC',

@@ -16,10 +16,24 @@ class DocumentController extends Controller
         return view('docs.index', ['acts' => $acts, 'irsa' => Setting::all_()['irsa_rate']]);
     }
 
+    /** Page d'aperçu : le PDF s'affiche dans la page, avec les options et les boutons de téléchargement. */
+    public function preview(Request $r, Activity $activity, string $type)
+    {
+        abort_unless(isset(DocumentExporter::TITLES[$type]), 404);
+        $s = Setting::all_();
+        return view('docs.preview', [
+            'a' => $activity,
+            'type' => $type,
+            'title' => DocumentExporter::TITLES[$type],
+            'irsa' => $r->query('irsa', $s['irsa_rate']),
+            'showDates' => $s['presence_show_dates'] === 'OUI',
+        ]);
+    }
+
     /**
      * /documents/{activity}/{type}/{format}
      * type : decision|note|presence|etat|decompte    format : pdf|docx|xlsx
-     * Options (query string) : ?irsa=15  (taux IRSA)   ?dates=0  (présence sans dates)
+     * Options : ?irsa=15   ?dates=0   ?inline=1 (affiche le PDF au lieu de le télécharger)
      */
     public function export(Request $r, Activity $activity, string $type, string $format, DocumentService $docs, DocumentExporter $ex)
     {
@@ -35,8 +49,9 @@ class DocumentController extends Controller
         if ($format === 'xlsx') return $ex->excel($type, $d);
 
         $d['docs'] = $docs;
-        return Pdf::loadView("docs.$type", $d)
-            ->setPaper('a4', $type === 'presence' ? 'landscape' : 'portrait')
-            ->download("{$type}-{$d['file']}.pdf");
+        $pdf = Pdf::loadView("docs.$type", $d)
+            ->setPaper('a4', $type === 'presence' ? 'landscape' : 'portrait');
+        $name = "{$type}-{$d['file']}.pdf";
+        return $r->boolean('inline') ? $pdf->stream($name) : $pdf->download($name);
     }
 }

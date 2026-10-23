@@ -1,8 +1,11 @@
 @php
- $num  = $a->note_number ?: $s['note_number'];
- $logo = ($s['note_show_logo'] ?? 'OUI') === 'OUI' ? \App\Support\Logo::uri() : null;
- $left = preg_split('/\R/', $s['note_header_left']);
- $sign = preg_split('/\R/', $s['note_signature']);
+ $num   = $a->note_number ?: $s['note_number'];
+ $show  = ($s['show_logo'] ?? 'OUI') === 'OUI';
+ $top   = ($s['note_logo_position'] ?? 'HAUT') === 'HAUT';
+ $logo  = $show ? \App\Support\Logo::uri() : null;
+ $real  = \App\Support\Logo::isReal();
+ $left  = preg_split('/\R/', $s['note_header_left']);
+ $sign  = preg_split('/\R/', $s['note_signature']);
 @endphp
 <!doctype html><html><head><meta charset="utf-8"><style>
 @page{margin:22px 40px 60px 40px}
@@ -13,10 +16,13 @@ table.t{width:100%;border-collapse:collapse} table.t th,table.t td{border:1px so
 table.t th{text-align:center} thead{display:table-header-group} tr{page-break-inside:avoid}
 .sig{margin-left:50%;text-align:center}
 </style></head><body>
+@if($logo && $top)
+<div class="c" style="margin-bottom:6px"><img src="{{ $logo }}" height="{{ $real ? 54 : 42 }}">@if(!$real)<br><b style="font-size:8pt">{{ $s['republic'] }}</b>@endif</div>
+@endif
 <table class="h"><tr>
  <td width="49%" class="c">@foreach($left as $l){{ $l }}<br>@endforeach</td>
  <td width="51%">
-  @if($logo)<div class="c"><img src="{{ $logo }}" height="52"></div>@endif
+  @if($logo && !$top)<div class="c"><img src="{{ $logo }}" height="52"></div>@endif
   <div class="c" style="margin:6px 0"><b>{{ $s['note_title'] }}</b></div>
   <div class="j"><b>{{ $docs->tpl($num.' '.$s['note_subject'], get_defined_vars()) }}</b></div>
   <div class="c" style="margin-top:3px"><b>SESSION {{ $s['session'] }}</b></div>

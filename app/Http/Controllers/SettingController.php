@@ -18,6 +18,8 @@ class SettingController extends Controller
             'auto' => 'required|in:OUI,NON',
             'use_history' => 'required|in:OUI,NON',
             'avoid_overlap' => 'required|in:OUI,NON',
+            'show_logo' => 'required|in:OUI,NON',
+            'note_logo_position' => 'required|in:HAUT,COTE',
             'irsa_rate' => 'required|numeric|min:0|max:100',
             'presence_max_cols' => 'required|integer|min:1|max:31',
             'presence_row_height' => 'required|integer|min:18|max:120',

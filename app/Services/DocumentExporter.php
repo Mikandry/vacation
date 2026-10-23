@@ -3,7 +3,6 @@ namespace App\Services;
 
 use App\Models\Activity;
 use App\Models\Agent;
-use App\Support\Flag;
 use App\Support\Logo;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
@@ -18,6 +17,7 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpWord\IOFactory;
 use PhpOffice\PhpWord\PhpWord;
 use PhpOffice\PhpWord\Style\Cell as CellStyle;
+use PhpOffice\PhpWord\Style\Table as TableStyle;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class DocumentExporter
@@ -38,6 +38,13 @@ class DocumentExporter
     }
     private function tmp(): string { return tempnam(sys_get_temp_dir(), 'rep'); }
     private function nf($x): string { return number_format((float) $x, 0, ',', ' '); }
+    private function showLogo(array $s): bool { return ($s['show_logo'] ?? 'OUI') === 'OUI'; }
+
+    /** Nombre de lignes estimé pour un texte dans une colonne de $cpl caractères (retour à la ligne). */
+    private function lines(?string $text, int $cpl): int
+    {
+        return max(1, (int) ceil(mb_strlen((string) $text) / max(1, $cpl * 0.85)));
+    }
 
     /* ============================ WORD ============================ */
     public function word(string $type, array $d): BinaryFileResponse
@@ -45,7 +52,7 @@ class DocumentExporter
         $w = new PhpWord();
         $w->setDefaultFontName('Times New Roman');
         $w->setDefaultFontSize(11);
-        $w->addTableStyle('grid', ['borderSize' => 6, 'borderColor' => '000000', 'cellMargin' => 50]);
+        $w->addTableStyle('grid', ['borderSize' => 6, 'borderColor' => '000000', 'cellMargin' => 50, 'layout' => TableStyle::LAYOUT_FIXED]);
         match ($type) {
             'decision' => $this->wordDecision($w, $d),
             'note' => $this->wordNote($w, $d),
@@ -58,15 +65,37 @@ class DocumentExporter
         return $this->send($tmp, "{$type}-{$d['file']}.docx");
     }
 
-    private function wordDecision(PhpWord $w, array $d): void
+    /** Logo de Madagascar, centré, TOUT EN HAUT du document. */
+    private function wordLogoTop($sec, array $s): void
     {
-        $s = $d['s'];
-        $sec = $w->addSection(['marginTop' => 700, 'marginBottom' => 700, 'marginLeft' => 900, 'marginRight' => 900]);
-        if (($s['show_flag'] ?? 'OUI') === 'OUI') {
-            $sec->addImage(Flag::file(), ['width' => 62, 'height' => 41, 'alignment' => 'center']);
+        if (!$this->showLogo($s)) return;
+        $h = 53;
+        $sec->addImage(Logo::file(), ['width' => (int) round($h * Logo::ratio()), 'height' => $h, 'alignment' => 'center']);
+        if (!Logo::isReal()) {   // drapeau dessiné : on ajoute République + devise
             $sec->addText($s['republic'], ['bold' => true, 'size' => 9], ['alignment' => 'center', 'spaceAfter' => 0]);
             $sec->addText($s['motto'], ['italic' => true, 'size' => 8], ['alignment' => 'center']);
         }
+    }
+
+    /** Bloc « considérant » à gauche (ministère, secrétariat, direction…) + titre à droite. */
+    private function wordHeaderBlock($sec, array $s, array $d, string $titleKey, string $l1Key, string $l2Key, int $titleSize): void
+    {
+        $t = $sec->addTable(['borderSize' => 0, 'borderColor' => 'FFFFFF']);
+        $r = $t->addRow();
+        $lc = $r->addCell(4300);
+        foreach (preg_split('/\R/', $s['doc_header']) as $ln) $lc->addText($ln, ['size' => 9], ['alignment' => 'center']);
+        $rc = $r->addCell(5900);
+        $rc->addText($this->docs->tpl($s[$titleKey], $d), ['bold' => true, 'size' => $titleSize], ['alignment' => 'center', 'spaceAfter' => 80]);
+        $rc->addText($this->docs->tpl($s[$l1Key], $d), ['bold' => true], ['alignment' => 'center']);
+        if (trim($s[$l2Key]) !== '') $rc->addText($this->docs->tpl($s[$l2Key], $d), ['size' => 9, 'italic' => true], ['alignment' => 'center']);
+        $sec->addTextBreak(1);
+    }
+
+    private function wordDecision(PhpWord $w, array $d): void
+    {
+        $s = $d['s'];
+        $sec = $w->addSection(['marginTop' => 600, 'marginBottom' => 700, 'marginLeft' => 900, 'marginRight' => 900]);
+        $this->wordLogoTop($sec, $s);
         $head = $sec->addTable();
         $r = $head->addRow();
         $c = $r->addCell(3800);
@@ -86,7 +115,7 @@ class DocumentExporter
             foreach ([[900, 'N° d’ordre'], [600, 'n°'], [4700, 'NOM ET PRENOMS'], [1200, 'IM'], [2400, 'LOCALITE DE SERVICE']] as [$wd, $tx])
                 $h->addCell($wd)->addText($tx, ['bold' => true, 'size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
             foreach ($ch['rows'] as $k => $a) {
-                $row = $t->addRow();
+                $row = $t->addRow(null, ['cantSplit' => true]);
                 $row->addCell(900)->addText((string) ($ch['offset'] + $k + 1), ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
                 $row->addCell(600)->addText((string) ($k + 1), ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
                 $row->addCell(4700)->addText($a->name, ['size' => 10], ['spaceAfter' => 0]);
@@ -112,33 +141,35 @@ class DocumentExporter
         $sec->addText($s['signatory'], ['bold' => true], ['alignment' => 'right']);
     }
 
-    /** Note de service — mise en page du modèle note_vacation_CAP_2026.docx. */
+    /** Note de service — modèle note_vacation_CAP_2026.docx ; logo tout en haut (ou dans la colonne de droite si « COTE »). */
     private function wordNote(PhpWord $w, array $d): void
     {
         $s = $d['s'];
         $a = $d['a'];
+        $top = ($s['note_logo_position'] ?? 'HAUT') === 'HAUT';
         $font = trim($s['note_font']) ?: 'Book Antiqua';
         $w->setDefaultFontName($font);
         $w->setDefaultFontSize(12);
         $w->setDefaultParagraphStyle(['spaceAfter' => 0, 'spaceBefore' => 0]);
 
         $sec = $w->addSection(['marginTop' => 586, 'marginBottom' => 1440, 'marginLeft' => 1080, 'marginRight' => 1080]);
+        if ($top) $this->wordLogoTop($sec, $s);
         $head = $sec->addTable(['borderSize' => 0, 'borderColor' => 'FFFFFF', 'alignment' => 'center']);
         $row = $head->addRow();
         $left = $row->addCell(4815);
         foreach (preg_split('/\R/', $s['note_header_left']) as $line) $left->addText($line, [], ['alignment' => 'center']);
         $right = $row->addCell(4921);
-        if (($s['note_show_logo'] ?? 'OUI') === 'OUI') {
+        if (!$top && $this->showLogo($s)) {
             $right->addImage(Logo::file(), ['width' => 94, 'height' => 53, 'alignment' => 'center']);
         }
-        $right->addText($s['note_title'], ['bold' => true], ['alignment' => 'center', 'spaceBefore' => 120, 'spaceAfter' => 120]);
+        $right->addText($s['note_title'], ['bold' => true], ['alignment' => 'center', 'spaceBefore' => $top ? 0 : 120, 'spaceAfter' => 120]);
         $right->addText($this->docs->tpl(($a->note_number ?: $s['note_number']) . ' ' . $s['note_subject'], $d), ['bold' => true], ['alignment' => 'both']);
         $right->addText('SESSION ' . $s['session'], ['bold' => true], ['alignment' => 'center', 'spaceBefore' => 60]);
 
         $sec->addTextBreak(1);
         $sec->addText($this->docs->tpl($s['note_intro'], $d), [], ['alignment' => 'both', 'lineHeight' => 1.5, 'indentation' => ['firstLine' => 708], 'spaceAfter' => 120]);
 
-        $t = $sec->addTable(['borderSize' => 4, 'borderColor' => '000000', 'cellMarginLeft' => 70, 'cellMarginRight' => 70]);
+        $t = $sec->addTable(['borderSize' => 4, 'borderColor' => '000000', 'cellMarginLeft' => 70, 'cellMarginRight' => 70, 'layout' => TableStyle::LAYOUT_FIXED]);
         $cols = [[610, 'N°'], [5091, 'NOM ET PRENOMS'], [1394, 'IM'], [2823, 'LOCALITE']];
         $h = $t->addRow(500, ['tblHeader' => true, 'cantSplit' => true]);
         foreach ($cols as [$wd, $tx]) $h->addCell($wd, ['valign' => 'center'])->addText($tx, ['bold' => true], ['alignment' => 'center']);
@@ -157,15 +188,17 @@ class DocumentExporter
         }
     }
 
-    /** Fiche de présence (paysage, 15 colonnes max par feuille, une feuille par série de jours). */
+    /** Fiche de présence : paysage, logo tout en haut, 15 colonnes max par feuille. */
     private function wordPresence(PhpWord $w, array $d): void
     {
         $s = $d['s'];
         $w->setDefaultParagraphStyle(['spaceAfter' => 0, 'spaceBefore' => 0]);
         $total = 15400;
         $idw = max(25, min(60, (int) $s['presence_id_width']));
-        $idTotal = (int) round($total * $idw / 100);
-        $wN = 450; $wIm = 1000; $wLoc = 1500; $wName = $idTotal - $wN - $wIm - $wLoc;
+        $wN = 120 + 70 * strlen((string) max(1, $d['n']));   // N° : juste la place des chiffres (330 pour 3 chiffres)
+        $wIm = 1100; $wLoc = 1800;
+        $wName = max((int) round($total * $idw / 100) - $wN - $wIm - $wLoc, $wIm + $wLoc + 200);   // nom >= IM + localité
+        $idTotal = $wN + $wName + $wIm + $wLoc;
         $rowH = max(18, (int) $s['presence_row_height']) * 20;
         $left = preg_split('/\R/', $s['presence_header_left']);
         $nSeries = count($d['series']);
@@ -173,26 +206,26 @@ class DocumentExporter
         foreach ($d['series'] as $si => $sr) {
             $cols = $sr['cols'];
             $dayW = max(300, intdiv($total - $idTotal, $cols));
-            $sec = $w->addSection(['orientation' => 'landscape', 'marginTop' => 500, 'marginBottom' => 500, 'marginLeft' => 720, 'marginRight' => 720]);
+            $sec = $w->addSection(['orientation' => 'landscape', 'marginTop' => 450, 'marginBottom' => 500, 'marginLeft' => 720, 'marginRight' => 720]);
 
+            $this->wordLogoTop($sec, $s);                       // 1) logo tout en haut
             $head = $sec->addTable(['borderSize' => 0, 'borderColor' => 'FFFFFF']);
             $r = $head->addRow();
             $lc = $r->addCell(6200);
-            foreach ($left as $ln) $lc->addText($ln, ['size' => 9], ['alignment' => 'center']);
+            foreach ($left as $ln) $lc->addText($ln, ['size' => 9], ['alignment' => 'center']);   // 2) bloc ministère à gauche
             $rc = $r->addCell(9200);
-            if (($s['note_show_logo'] ?? 'OUI') === 'OUI') {
-                $rc->addImage(Logo::file(), ['width' => 94, 'height' => 53, 'alignment' => 'center']);
-            }
             $rc->addText($this->docs->tpl($s['presence_title'], $d), ['bold' => true, 'size' => 10], ['alignment' => 'center']);
             $rc->addText($this->docs->tpl($s['presence_line1'], $d), ['bold' => true, 'size' => 10], ['alignment' => 'center']);
             if (trim($s['presence_line2']) !== '') $rc->addText($this->docs->tpl($s['presence_line2'], $d), ['size' => 9], ['alignment' => 'center']);
-            if ($nSeries > 1) $rc->addText("Feuille " . ($si + 1) . "/$nSeries — jours {$sr['from']} à {$sr['to']}", ['italic' => true, 'size' => 9], ['alignment' => 'center']);
+            if ($nSeries > 1) $rc->addText('Feuille ' . ($si + 1) . "/$nSeries — jours {$sr['from']} à {$sr['to']}", ['italic' => true, 'size' => 9], ['alignment' => 'center']);
             $sec->addTextBreak(1);
 
             $t = $sec->addTable('grid');
             $h1 = $t->addRow(null, ['tblHeader' => true]);
             foreach ([[$wN, 'N°'], [$wName, 'NOM ET PRENOMS'], [$wIm, 'IM'], [$wLoc, 'LOCALITE DE SERVICE']] as [$wd, $tx])
-                $h1->addCell($wd, ['vMerge' => 'restart', 'valign' => 'center'])->addText($tx, ['bold' => true, 'size' => 9], ['alignment' => 'center']);
+                $h1->addCell($wd, ['vMerge' => 'restart', 'valign' => 'center'])->addText($tx, ['bold' => true, 'size' => $wd === $wN ? 7 : 9], ['alignment' => 'center']);
+            // foreach ([[$wN, 'N°'], [$wName, 'NOM ET PRENOMS'], [$wIm, 'IM'], [$wLoc, 'LOCALITE DE SERVICE']] as [$wd, $tx])
+            //     $h1->addCell($wd, ['vMerge' => 'restart', 'valign' => 'center'])->addText($tx, ['bold' => true, 'size' => 9], ['alignment' => 'center']);
             $h1->addCell($dayW * $cols, ['gridSpan' => $cols, 'valign' => 'center'])->addText('EMARGEMENT', ['bold' => true, 'size' => 9], ['alignment' => 'center']);
             $h2 = $t->addRow(1050, ['tblHeader' => true]);
             foreach ([$wN, $wName, $wIm, $wLoc] as $wd) $h2->addCell($wd, ['vMerge' => 'continue']);
@@ -201,8 +234,10 @@ class DocumentExporter
                 $c->addText($sr['labels'][$k], ['bold' => true, 'size' => 8], ['alignment' => 'center']);
             }
             foreach ($d['agents'] as $i => $ag) {
-                $row = $t->addRow($rowH, ['cantSplit' => true]);
-                $row->addCell($wN, ['valign' => 'center'])->addText((string) ($i + 1), ['size' => 9], ['alignment' => 'center']);
+                //$row = $t->addRow($rowH, ['cantSplit' => true]);
+                 $row = $t->addRow($rowH, ['cantSplit' => true, 'exactHeight' => false]);   // hauteur MINIMALE : la ligne grandit si le nom est long
+                //$row->addCell($wN, ['valign' => 'center'])->addText((string) ($i + 1), ['size' => 9], ['alignment' => 'center']);
+                                $row->addCell($wN, ['valign' => 'center'])->addText((string) ($i + 1), ['size' => 7], ['alignment' => 'center']);
                 $row->addCell($wName, ['valign' => 'center'])->addText($ag->name, ['size' => 9]);
                 $row->addCell($wIm, ['valign' => 'center'])->addText($this->docs->fmtIm($ag->im), ['size' => 9], ['alignment' => 'center']);
                 $row->addCell($wLoc, ['valign' => 'center'])->addText((string) $ag->locality, ['size' => 9], ['alignment' => 'center']);
@@ -217,21 +252,20 @@ class DocumentExporter
     {
         $a = $d['a'];
         $s = $d['s'];
-        $sec = $w->addSection(['marginTop' => 700, 'marginBottom' => 700, 'marginLeft' => 800, 'marginRight' => 800]);
-        $sec->addText($s['ministry'], ['bold' => true, 'size' => 10]);
-        $sec->addText($this->docs->tpl($s['etat_title'], $d), ['bold' => true, 'size' => 16], ['alignment' => 'center']);
-        $sec->addText($this->docs->tpl($s['etat_line1'], $d), ['bold' => true], ['alignment' => 'center']);
-        $sec->addText($this->docs->tpl($s['etat_line2'], $d), ['size' => 9, 'italic' => true], ['alignment' => 'center']);
+        $w->setDefaultParagraphStyle(['spaceAfter' => 0, 'spaceBefore' => 0]);
+        $sec = $w->addSection(['marginTop' => 500, 'marginBottom' => 700, 'marginLeft' => 800, 'marginRight' => 800]);
+        $this->wordLogoTop($sec, $s);
+        $this->wordHeaderBlock($sec, $s, $d, 'etat_title', 'etat_line1', 'etat_line2', 15);
         $t = $sec->addTable('grid');
-        $cols = [[500, 'N°'], [3300, 'NOM ET PRENOMS'], [900, 'IM'], [1200, 'LOCALITE'], [600, 'Jours'], [1100, 'Taux/jour'], [1300, 'Montant (Ar)'], [1500, 'ÉMARGEMENT']];
+        $cols = [[500, 'N°'], [3200, 'NOM ET PRENOMS'], [1000, 'IM'], [1500, 'LOCALITE'], [600, 'Jours'], [1000, 'Taux/jour'], [1200, 'Montant (Ar)'], [1300, 'ÉMARGEMENT']];
         $h = $t->addRow(null, ['tblHeader' => true]);
-        foreach ($cols as [$wd, $tx]) $h->addCell($wd)->addText($tx, ['bold' => true, 'size' => 9], ['alignment' => 'center', 'spaceAfter' => 0]);
+        foreach ($cols as [$wd, $tx]) $h->addCell($wd, ['valign' => 'center'])->addText($tx, ['bold' => true, 'size' => 9], ['alignment' => 'center']);
         foreach ($d['agents'] as $i => $ag) {
-            $r = $t->addRow(380);
-            $vals = [(string) ($i + 1), $ag->name, (string) $ag->im, (string) $ag->locality, (string) $a->days, $this->nf($a->rate), $this->nf($d['amount']), ''];
+            $r = $t->addRow(380, ['cantSplit' => true]);
+            $vals = [(string) ($i + 1), $ag->name, $this->docs->fmtIm($ag->im), (string) $ag->locality, (string) $a->days, $this->nf($a->rate), $this->nf($d['amount']), ''];
             foreach ($cols as $k => [$wd]) {
                 $al = $k === 1 ? 'left' : (in_array($k, [5, 6]) ? 'right' : 'center');
-                $r->addCell($wd)->addText($vals[$k], ['size' => 9], ['alignment' => $al, 'spaceAfter' => 0]);
+                $r->addCell($wd, ['valign' => 'center'])->addText($vals[$k], ['size' => 9], ['alignment' => $al]);
             }
         }
         $sec->addTextBreak(1);
@@ -240,20 +274,18 @@ class DocumentExporter
         $sec->addText($this->docs->signDate($d), [], ['alignment' => 'right']);
     }
 
-    /** État de décompte : brut / IRSA / net, avec total de page et report. */
+    /** État de décompte : logo en haut, bloc ministère, puis brut / IRSA / net avec total de page et report. */
     private function wordDecompte(PhpWord $w, array $d): void
     {
         $s = $d['s'];
         $a = $d['a'];
         $w->setDefaultParagraphStyle(['spaceAfter' => 0, 'spaceBefore' => 0]);
-        $sec = $w->addSection(['marginTop' => 700, 'marginBottom' => 700, 'marginLeft' => 800, 'marginRight' => 800]);
-        $sec->addText($s['ministry'], ['bold' => true, 'size' => 10]);
-        $sec->addText($this->docs->tpl($s['decompte_title'], $d), ['bold' => true, 'size' => 15], ['alignment' => 'center', 'spaceBefore' => 120]);
-        $sec->addText($this->docs->tpl($s['decompte_line1'], $d), ['bold' => true], ['alignment' => 'center']);
-        $sec->addText($this->docs->tpl($s['decompte_line2'], $d), ['size' => 9, 'italic' => true], ['alignment' => 'center', 'spaceAfter' => 120]);
+        $sec = $w->addSection(['marginTop' => 500, 'marginBottom' => 700, 'marginLeft' => 800, 'marginRight' => 800]);
+        $this->wordLogoTop($sec, $s);
+        $this->wordHeaderBlock($sec, $s, $d, 'decompte_title', 'decompte_line1', 'decompte_line2', 14);
 
-        $cols = [[450, 'N°'], [2900, 'NOM ET PRENOMS'], [850, 'IM'], [1200, 'LOCALITE'], [500, 'Jours'], [850, 'Taux/jour'], [1100, 'Montant brut'], [900, 'IRSA ' . $this->docs->rate($d['irsaRate']) . ' %'], [1100, 'Net à percevoir']];
-        $span6 = 450 + 2900 + 850 + 1200 + 500 + 850;
+        $cols = [[450, 'N°'], [3200, 'NOM ET PRENOMS'], [900, 'IM'], [1300, 'LOCALITE'], [500, 'Jours'], [850, 'Taux/jour'], [1100, 'Montant brut'], [900, 'IRSA ' . $this->docs->rate($d['irsaRate']) . ' %'], [1100, 'Net à percevoir']];
+        $span6 = $cols[0][0] + $cols[1][0] + $cols[2][0] + $cols[3][0] + $cols[4][0] + $cols[5][0];
         $nChunks = count($d['dec']);
         foreach ($d['dec'] as $ci => $ch) {
             $t = $sec->addTable('grid');
@@ -268,7 +300,7 @@ class DocumentExporter
             if (!$ch['first']) $sum('REPORT (page précédente)', $ch['report']);
             foreach ($ch['rows'] as $k => $ag) {
                 $r = $t->addRow(340, ['cantSplit' => true]);
-                $vals = [(string) ($ch['offset'] + $k + 1), $ag->name, (string) $ag->im, (string) $ag->locality, (string) $a->days, $this->nf($a->rate), $this->nf($d['amount']), $this->nf($d['irsaAmt']), $this->nf($d['net'])];
+                $vals = [(string) ($ch['offset'] + $k + 1), $ag->name, $this->docs->fmtIm($ag->im), (string) $ag->locality, (string) $a->days, $this->nf($a->rate), $this->nf($d['amount']), $this->nf($d['irsaAmt']), $this->nf($d['net'])];
                 foreach ($cols as $j => [$wd]) {
                     $al = $j === 1 ? 'left' : ($j >= 5 ? 'right' : 'center');
                     $r->addCell($wd, ['valign' => 'center'])->addText($vals[$j], ['size' => 8.5], ['alignment' => $al]);
@@ -309,6 +341,70 @@ class DocumentExporter
         $sh->getPageSetup()->setFitToPage(true);
     }
 
+    /** Logo centré tout en haut de la feuille. Réserve $rows lignes et retourne leur nombre (0 si désactivé). */
+    private function logoTop(Worksheet $sh, array $s, array $widths, int $rows = 3): int
+    {
+        if (!$this->showLogo($s)) return 0;
+        $h = 54;
+        $wpx = (int) round($h * Logo::ratio());
+        $px = array_map(fn($w) => (int) round($w * 7 + 5), $widths);
+        $center = max(0, array_sum($px) / 2 - $wpx / 2);
+        $acc = 0;
+        $idx = 0;
+        foreach ($px as $i => $p) {
+            $idx = $i;
+            if ($acc + $p > $center) break;
+            $acc += $p;
+        }
+        $dr = new Drawing();
+        $dr->setName('Logo');
+        $dr->setPath(Logo::file());
+        $dr->setHeight($h);
+        $dr->setCoordinates(Coordinate::stringFromColumnIndex($idx + 1) . '1');
+        $dr->setOffsetX((int) max(0, $center - $acc));
+        $dr->setOffsetY(3);
+        $dr->setWorksheet($sh);
+        for ($r = 1; $r <= $rows; $r++) $sh->getRowDimension($r)->setRowHeight(20);
+        return $rows;
+    }
+
+    /** Logo tout en haut ; si c'est le drapeau dessiné, ajoute les lignes République + devise. Retourne le nombre de lignes utilisées. */
+    private function excelTop(Worksheet $sh, array $s, array $widths, string $lastCol): int
+    {
+        $o = $this->logoTop($sh, $s, $widths, 3);
+        if ($o > 0 && !Logo::isReal()) {
+            foreach ([$s['republic'], $s['motto']] as $k => $t) {
+                $o++;
+                $sh->setCellValue("A$o", $t);
+                $sh->mergeCells("A$o:{$lastCol}$o");
+                $sh->getStyle("A$o")->getAlignment()->setHorizontal('center');
+                if ($k === 0) $sh->getStyle("A$o")->getFont()->setBold(true);
+            }
+        }
+        return $o;
+    }
+
+    /** Bloc « considérant » à gauche + titre à droite. Retourne le nombre de lignes occupées. */
+    private function excelHeaderBlock(Worksheet $sh, array $s, array $d, int $r, string $titleKey, string $l1Key, string $l2Key, string $leftEnd, string $rightStart, string $lastCol): int
+    {
+        $lines = preg_split('/\R/', $s['doc_header']);
+        $n = max(count($lines), 6);
+        foreach ($lines as $i => $ln) {
+            $rr = $r + $i;
+            $sh->setCellValue("A$rr", $ln);
+            $sh->mergeCells("A$rr:{$leftEnd}$rr");
+            $sh->getStyle("A$rr")->getAlignment()->setHorizontal('center');
+            $sh->getStyle("A$rr")->getFont()->setSize(9);
+        }
+        $title = $this->docs->tpl($s[$titleKey], $d) . "\n" . $this->docs->tpl($s[$l1Key], $d);
+        if (trim($s[$l2Key]) !== '') $title .= "\n" . $this->docs->tpl($s[$l2Key], $d);
+        $sh->setCellValue("{$rightStart}$r", $title);
+        $sh->mergeCells("{$rightStart}$r:{$lastCol}" . ($r + $n - 1));
+        $sh->getStyle("{$rightStart}$r")->getAlignment()->setWrapText(true)->setHorizontal('center')->setVertical('center');
+        $sh->getStyle("{$rightStart}$r")->getFont()->setBold(true)->setSize(12);
+        return $n;
+    }
+
     public function excel(string $type, array $d): BinaryFileResponse
     {
         $ss = new Spreadsheet();
@@ -327,28 +423,9 @@ class DocumentExporter
         $sh = $ss->getActiveSheet();
         $s = $d['s'];
         $sh->setTitle('Décision');
-        foreach (['A' => 10, 'B' => 6, 'C' => 48, 'D' => 12, 'E' => 24] as $c => $wd) $sh->getColumnDimension($c)->setWidth($wd);
-        $row = 1;
-        if (($s['show_flag'] ?? 'OUI') === 'OUI') {
-            $dr = new Drawing();
-            $dr->setName('Drapeau');
-            $dr->setPath(Flag::file());
-            $dr->setHeight(42);
-            $dr->setCoordinates('C1');
-            $dr->setOffsetX(110);
-            $dr->setOffsetY(3);
-            $dr->setWorksheet($sh);
-            $sh->getRowDimension(1)->setRowHeight(48);
-            $row = 2;
-            foreach ([$s['republic'], $s['motto']] as $k => $t) {
-                $sh->setCellValue("A$row", $t);
-                $sh->mergeCells("A$row:E$row");
-                $sh->getStyle("A$row")->getAlignment()->setHorizontal('center');
-                if ($k === 0) $sh->getStyle("A$row")->getFont()->setBold(true);
-                $row++;
-            }
-            $row++;
-        }
+        $widths = [10, 6, 48, 12, 26];
+        foreach ($widths as $i => $wd) $sh->getColumnDimension(Coordinate::stringFromColumnIndex($i + 1))->setWidth($wd);
+        $row = $this->excelTop($sh, $s, $widths, 'E') + 1;
         $sh->setCellValue("A$row", $s['ministry']); $sh->mergeCells("A$row:C$row"); $row++;
         $sh->setCellValue("A$row", $this->docs->decisionTitle($d)); $sh->mergeCells("A$row:E$row");
         $sh->getStyle("A$row")->getAlignment()->setWrapText(true)->setVertical('top');
@@ -381,6 +458,10 @@ class DocumentExporter
                 $sh->setCellValue("C$row", $ag->name);
                 $sh->setCellValueExplicit("D$row", (string) $ag->im, DataType::TYPE_STRING);
                 $sh->setCellValue("E$row", (string) $ag->locality);
+                $sh->getStyle("A$row:E$row")->getAlignment()->setWrapText(true)->setVertical('center');
+                $sh->getStyle("A$row:B$row")->getAlignment()->setHorizontal('center');
+                $sh->getStyle("D$row:E$row")->getAlignment()->setHorizontal('center');
+                $sh->getRowDimension($row)->setRowHeight(max(16, 13 * max($this->lines($ag->name, 46), $this->lines($ag->locality, 24)) + 4));
                 $row++;
             }
             if ($ch['rows']->count()) {
@@ -414,7 +495,7 @@ class DocumentExporter
         $this->setup($sh, false);
     }
 
-    /** Une feuille Excel par série de jours (15 colonnes max). */
+    /** Présence : une feuille Excel par série de jours (15 colonnes max), logo tout en haut. */
     private function excelPresence(Spreadsheet $ss, array $d): void
     {
         $s = $d['s'];
@@ -429,36 +510,30 @@ class DocumentExporter
             $first = 5;
             $last = Coordinate::stringFromColumnIndex(4 + $cols);
             $firstCol = Coordinate::stringFromColumnIndex($first);
-            foreach (['A' => 5, 'B' => 40, 'C' => 11, 'D' => 18] as $c => $wd) $sh->getColumnDimension($c)->setWidth($wd);
-            for ($k = 0; $k < $cols; $k++) $sh->getColumnDimension(Coordinate::stringFromColumnIndex($first + $k))->setWidth(8.5);
 
-            foreach ($lines as $i => $ln) {
-                $r = $i + 1;
+            //$widths = [5, 42, 12, 22];
+            $widths = [3, 42, 12, 22];   // N° la plus étroite ; nom (42) >= IM (12) + localité (22)  // N° : colonne la plus étroite
+            for ($k = 0; $k < $cols; $k++) $widths[] = 8.5;
+            foreach ($widths as $i => $wd) $sh->getColumnDimension(Coordinate::stringFromColumnIndex($i + 1))->setWidth($wd);
+
+            $o = $this->excelTop($sh, $s, $widths, $last);       // 1) logo tout en haut
+            $r0 = $o + 1;
+            foreach ($lines as $i => $ln) {                      // 2) bloc ministère à gauche
+                $r = $r0 + $i;
                 $sh->setCellValue("A$r", $ln);
                 $sh->mergeCells("A$r:D$r");
                 $sh->getStyle("A$r")->getAlignment()->setHorizontal('center');
                 $sh->getStyle("A$r")->getFont()->setSize(9);
             }
-            if (($s['note_show_logo'] ?? 'OUI') === 'OUI') {
-                $dr = new Drawing();
-                $dr->setName('Logo');
-                $dr->setPath(Logo::file());
-                $dr->setHeight(58);
-                $dr->setCoordinates($firstCol . '1');
-                $dr->setOffsetX(10);
-                $dr->setWorksheet($sh);
-                $sh->getRowDimension(1)->setRowHeight(24);
-                $sh->getRowDimension(2)->setRowHeight(24);
-            }
-            $title = $this->docs->tpl($s['presence_title'], $d) . "\n" . $this->docs->tpl($s['presence_line1'], $d);
+            $title = $this->docs->tpl($s['presence_title'], $d) . "\n" . $this->docs->tpl($s['presence_line1'], $d);   // titre à droite
             if (trim($s['presence_line2']) !== '') $title .= "\n" . $this->docs->tpl($s['presence_line2'], $d);
             if ($nSeries > 1) $title .= "\nFeuille " . ($si + 1) . "/$nSeries — jours {$sr['from']} à {$sr['to']}";
-            $sh->setCellValue($firstCol . '3', $title);
-            $sh->mergeCells($firstCol . "3:{$last}7");
-            $sh->getStyle($firstCol . '3')->getAlignment()->setWrapText(true)->setHorizontal('center')->setVertical('center');
-            $sh->getStyle($firstCol . '3')->getFont()->setBold(true);
+            $sh->setCellValue($firstCol . $r0, $title);
+            $sh->mergeCells($firstCol . "$r0:{$last}" . ($r0 + 6));
+            $sh->getStyle($firstCol . $r0)->getAlignment()->setWrapText(true)->setHorizontal('center')->setVertical('center');
+            $sh->getStyle($firstCol . $r0)->getFont()->setBold(true);
 
-            $top = max(count($lines), 7) + 2;
+            $top = $r0 + max(count($lines), 7) + 1;
             foreach (['A' => 'N°', 'B' => 'NOM ET PRENOMS', 'C' => 'IM', 'D' => 'LOCALITE DE SERVICE'] as $c => $t) {
                 $sh->setCellValue("{$c}$top", $t);
                 $sh->mergeCells("{$c}$top:{$c}" . ($top + 1));
@@ -476,13 +551,15 @@ class DocumentExporter
             $row = $top + 2;
             foreach ($d['agents'] as $i => $ag) {
                 $sh->setCellValue("A$row", $i + 1);
+                $sh->getStyle("A$row")->getFont()->setSize(8);
                 $sh->setCellValue("B$row", $ag->name);
                 $sh->setCellValueExplicit("C$row", $this->docs->fmtIm($ag->im), DataType::TYPE_STRING);
                 $sh->setCellValue("D$row", (string) $ag->locality);
                 $sh->getStyle("A$row:D$row")->getAlignment()->setVertical('center')->setWrapText(true);
                 $sh->getStyle("A$row")->getAlignment()->setHorizontal('center');
                 $sh->getStyle("C$row:D$row")->getAlignment()->setHorizontal('center');
-                $sh->getRowDimension($row)->setRowHeight($rh);
+                $h = 13 * max($this->lines($ag->name, 40), $this->lines($ag->locality, 20)) + 6;
+                $sh->getRowDimension($row)->setRowHeight(max($rh, $h));
                 $row++;
             }
             $this->box($sh, "A$top:{$last}" . max($row - 1, $top + 1));
@@ -499,64 +576,68 @@ class DocumentExporter
         $s = $d['s'];
         $a = $d['a'];
         $sh->setTitle('État de vacations');
-        foreach (['A' => 5, 'B' => 42, 'C' => 11, 'D' => 16, 'E' => 7, 'F' => 12, 'G' => 14, 'H' => 22] as $c => $wd) $sh->getColumnDimension($c)->setWidth($wd);
-        $sh->setCellValue('A1', $s['ministry']);
-        $sh->setCellValue('A2', $this->docs->tpl($s['etat_title'], $d)); $sh->mergeCells('A2:H2');
-        $sh->getStyle('A2')->getFont()->setBold(true)->setSize(16);
-        $sh->getStyle('A2')->getAlignment()->setHorizontal('center');
-        $sh->setCellValue('A3', $this->docs->tpl($s['etat_line1'], $d)); $sh->mergeCells('A3:H3');
-        $sh->getStyle('A3')->getFont()->setBold(true); $sh->getStyle('A3')->getAlignment()->setHorizontal('center');
-        $sh->setCellValue('A4', $this->docs->tpl($s['etat_line2'], $d)); $sh->mergeCells('A4:H4');
-        $sh->getStyle('A4')->getAlignment()->setHorizontal('center');
-        $sh->fromArray(['N°', 'NOM ET PRENOMS', 'IM', 'LOCALITE', 'Jours', 'Taux / jour (Ar)', 'Montant (Ar)', 'ÉMARGEMENT'], null, 'A6');
-        $this->head($sh, 'A6:H6');
-        $row = 7;
+        $widths = [5, 44, 12, 20, 7, 12, 14, 22];
+        foreach ($widths as $i => $wd) $sh->getColumnDimension(Coordinate::stringFromColumnIndex($i + 1))->setWidth($wd);
+
+        $o = $this->excelTop($sh, $s, $widths, 'H');
+        $n = $this->excelHeaderBlock($sh, $s, $d, $o + 1, 'etat_title', 'etat_line1', 'etat_line2', 'C', 'D', 'H');
+
+        $hdr = $o + $n + 2;
+        $sh->fromArray(['N°', 'NOM ET PRENOMS', 'IM', 'LOCALITE', 'Jours', 'Taux / jour (Ar)', 'Montant (Ar)', 'ÉMARGEMENT'], null, "A$hdr");
+        $this->head($sh, "A$hdr:H$hdr");
+        $sh->getRowDimension($hdr)->setRowHeight(28);
+        $row = $hdr + 1;
+        $firstData = $row;
         foreach ($d['agents'] as $i => $ag) {
             $sh->setCellValue("A$row", $i + 1);
+            $sh->getStyle("A$row")->getFont()->setSize(8);
             $sh->setCellValue("B$row", $ag->name);
-            $sh->setCellValueExplicit("C$row", (string) $ag->im, DataType::TYPE_STRING);
+            $sh->setCellValueExplicit("C$row", $this->docs->fmtIm($ag->im), DataType::TYPE_STRING);
             $sh->setCellValue("D$row", (string) $ag->locality);
             $sh->setCellValue("E$row", $a->days);
             $sh->setCellValue("F$row", $a->rate);
             $sh->setCellValue("G$row", "=E$row*F$row");
-            $sh->getRowDimension($row)->setRowHeight(20);
+            $sh->getStyle("A$row:H$row")->getAlignment()->setVertical('center');
+            $sh->getStyle("B$row")->getAlignment()->setWrapText(true);
+            $sh->getStyle("D$row")->getAlignment()->setWrapText(true);
+            $sh->getStyle("A$row")->getAlignment()->setHorizontal('center');
+            $sh->getStyle("C$row")->getAlignment()->setHorizontal('center');
+            $sh->getRowDimension($row)->setRowHeight(max(20, 13 * max($this->lines($ag->name, 40), $this->lines($ag->locality, 18)) + 6));
             $row++;
         }
         $sh->setCellValue("A$row", 'TOTAL'); $sh->mergeCells("A$row:F$row");
-        $sh->setCellValue("G$row", $d['n'] ? '=SUM(G7:G' . ($row - 1) . ')' : 0);
+        $sh->setCellValue("G$row", $d['n'] ? "=SUM(G{$firstData}:G" . ($row - 1) . ')' : 0);
         $sh->getStyle("A$row:G$row")->getFont()->setBold(true);
-        $sh->getStyle("F7:G$row")->getNumberFormat()->setFormatCode('#,##0');
-        $this->box($sh, "A6:H$row");
+        $sh->getStyle("F{$firstData}:G$row")->getNumberFormat()->setFormatCode('#,##0');
+        $this->box($sh, "A$hdr:H$row");
         $sh->setCellValue('A' . ($row + 2), $this->docs->tpl($s['etat_footer'], $d));
         $sh->getStyle('A' . ($row + 2))->getFont()->setItalic(true);
-        $sh->getPageSetup()->setRowsToRepeatAtTopByStartAndEnd(6, 6);
+        $sh->getPageSetup()->setRowsToRepeatAtTopByStartAndEnd($hdr, $hdr);
         $this->setup($sh, false);
     }
 
-    /** Décompte : le taux IRSA est la cellule C5 ; tous les montants se recalculent si vous la modifiez. */
+    /** Décompte : logo en haut, bloc ministère, taux IRSA dans une cellule (tous les montants se recalculent si on la modifie). */
     private function excelDecompte(Spreadsheet $ss, array $d): void
     {
         $sh = $ss->getActiveSheet();
         $s = $d['s'];
         $a = $d['a'];
         $sh->setTitle('Décompte');
-        foreach (['A' => 5, 'B' => 38, 'C' => 11, 'D' => 15, 'E' => 7, 'F' => 11, 'G' => 14, 'H' => 13, 'I' => 14] as $c => $wd) $sh->getColumnDimension($c)->setWidth($wd);
-        $sh->setCellValue('A1', $s['ministry']);
-        $sh->setCellValue('A2', $this->docs->tpl($s['decompte_title'], $d)); $sh->mergeCells('A2:I2');
-        $sh->getStyle('A2')->getFont()->setBold(true)->setSize(15);
-        $sh->getStyle('A2')->getAlignment()->setHorizontal('center');
-        $sh->setCellValue('A3', $this->docs->tpl($s['decompte_line1'], $d)); $sh->mergeCells('A3:I3');
-        $sh->getStyle('A3')->getFont()->setBold(true); $sh->getStyle('A3')->getAlignment()->setHorizontal('center');
-        $sh->setCellValue('A4', $this->docs->tpl($s['decompte_line2'], $d)); $sh->mergeCells('A4:I4');
-        $sh->getStyle('A4')->getAlignment()->setHorizontal('center');
-        $sh->setCellValue('A5', 'Taux IRSA (%) :'); $sh->mergeCells('A5:B5');
-        $sh->getStyle('A5')->getAlignment()->setHorizontal('right');
-        $sh->setCellValue('C5', $d['irsaRate']);
-        $sh->getStyle('C5')->getFont()->setBold(true)->getColor()->setRGB('0000FF');
-        $sh->getStyle('C5')->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('FFF9DB');
-        $this->box($sh, 'C5');
+        $widths = [5, 40, 12, 20, 7, 11, 14, 13, 15];
+        foreach ($widths as $i => $wd) $sh->getColumnDimension(Coordinate::stringFromColumnIndex($i + 1))->setWidth($wd);
 
-        $hdr = 7;
+        $o = $this->excelTop($sh, $s, $widths, 'I');
+        $n = $this->excelHeaderBlock($sh, $s, $d, $o + 1, 'decompte_title', 'decompte_line1', 'decompte_line2', 'C', 'D', 'I');
+
+        $ir = $o + $n + 1;   // ligne du taux IRSA
+        $sh->setCellValue("A$ir", 'Taux IRSA (%) :'); $sh->mergeCells("A$ir:B$ir");
+        $sh->getStyle("A$ir")->getAlignment()->setHorizontal('right');
+        $sh->setCellValue("C$ir", $d['irsaRate']);
+        $sh->getStyle("C$ir")->getFont()->setBold(true)->getColor()->setRGB('0000FF');
+        $sh->getStyle("C$ir")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('FFF9DB');
+        $this->box($sh, "C$ir");
+
+        $hdr = $ir + 2;
         $sh->fromArray(['N°', 'NOM ET PRENOMS', 'IM', 'LOCALITE', 'Jours', 'Taux / jour', 'Montant brut', 'IRSA', 'Net à percevoir'], null, "A$hdr");
         $this->head($sh, "A$hdr:I$hdr");
         $sh->getRowDimension($hdr)->setRowHeight(30);
@@ -578,14 +659,19 @@ class DocumentExporter
             foreach ($ch['rows'] as $k => $ag) {
                 $sh->setCellValue("A$row", $ch['offset'] + $k + 1);
                 $sh->setCellValue("B$row", $ag->name);
-                $sh->setCellValueExplicit("C$row", (string) $ag->im, DataType::TYPE_STRING);
+                $sh->setCellValueExplicit("C$row", $this->docs->fmtIm($ag->im), DataType::TYPE_STRING);
                 $sh->setCellValue("D$row", (string) $ag->locality);
                 $sh->setCellValue("E$row", $a->days);
                 $sh->setCellValue("F$row", $a->rate);
                 $sh->setCellValue("G$row", "=E$row*F$row");
-                $sh->setCellValue("H$row", "=ROUND(G$row*\$C\$5/100,0)");
+                $sh->setCellValue("H$row", "=ROUND(G$row*\$C\${$ir}/100,0)");
                 $sh->setCellValue("I$row", "=G$row-H$row");
-                $sh->getRowDimension($row)->setRowHeight(20);
+                $sh->getStyle("A$row:I$row")->getAlignment()->setVertical('center');
+                $sh->getStyle("B$row")->getAlignment()->setWrapText(true);
+                $sh->getStyle("D$row")->getAlignment()->setWrapText(true);
+                $sh->getStyle("A$row")->getAlignment()->setHorizontal('center');
+                $sh->getStyle("C$row")->getAlignment()->setHorizontal('center');
+                $sh->getRowDimension($row)->setRowHeight(max(20, 13 * max($this->lines($ag->name, 38), $this->lines($ag->locality, 18)) + 6));
                 $row++;
             }
             $lastRow = $row - 1;
@@ -614,7 +700,7 @@ class DocumentExporter
         $this->setup($sh, false);
     }
 
-    /* ======= Récapitulatif : matrice agents × activités ======= */
+    /* ======= Récapitulatif : matrice agents × activités (logo en haut) ======= */
     public function recapExcel(array $b): BinaryFileResponse
     {
         $ss = new Spreadsheet();
@@ -626,10 +712,20 @@ class DocumentExporter
         $head = ['N°', 'NOM ET PRENOMS', 'IM', 'LOCALITE', 'TYPE'];
         foreach ($acts as $a) $head[] = $a->code;
         array_push($head, 'Nb activités', 'Montant session (Ar)', 'Total retenu (Ar)', 'Statut', 'Activités reçues');
-        $sh->fromArray($head, null, 'A1');
         $lastCol = Coordinate::stringFromColumnIndex(count($head));
-        $this->head($sh, "A1:{$lastCol}1");
-        $row = 2;
+
+        $sh->getColumnDimension('A')->setWidth(5);
+        $sh->getColumnDimension('B')->setWidth(42);
+        $sh->getColumnDimension('C')->setWidth(12);
+        $sh->getColumnDimension('D')->setWidth(18);
+        $sh->getColumnDimension('E')->setWidth(12);
+        $o = $this->excelTop($sh, $b['settings'], [5, 42, 12, 18, 12], 'E');
+        $h = $o + 1;
+
+        $sh->fromArray($head, null, "A$h");
+        $this->head($sh, "A$h:{$lastCol}$h");
+        $row = $h + 1;
+        $first = $row;
         foreach ($b['rows'] as $i => $r) {
             $ag = $r['agent'];
             $line = [$i + 1, $ag->name, null, $ag->locality, $ag->type];
@@ -642,14 +738,12 @@ class DocumentExporter
         $sh->setCellValue("A$row", 'TOTAL');
         for ($k = 0; $k < $nA; $k++) {
             $c = Coordinate::stringFromColumnIndex(6 + $k);
-            $sh->setCellValue("$c$row", "=SUM({$c}2:{$c}" . ($row - 1) . ")");
+            $sh->setCellValue("$c$row", "=SUM({$c}{$first}:{$c}" . ($row - 1) . ")");
         }
         $sh->getStyle("A$row:{$lastCol}$row")->getFont()->setBold(true);
-        $this->box($sh, "A1:{$lastCol}$row");
-        $sh->getStyle(Coordinate::stringFromColumnIndex(7 + $nA) . "2:" . Coordinate::stringFromColumnIndex(8 + $nA) . "$row")->getNumberFormat()->setFormatCode('#,##0');
-        $sh->getColumnDimension('B')->setWidth(42);
-        $sh->getColumnDimension('D')->setWidth(14);
-        $sh->freezePane('C2');
+        $this->box($sh, "A$h:{$lastCol}$row");
+        $sh->getStyle(Coordinate::stringFromColumnIndex(7 + $nA) . "$first:" . Coordinate::stringFromColumnIndex(8 + $nA) . "$row")->getNumberFormat()->setFormatCode('#,##0');
+        $sh->freezePane('C' . $first);
         $this->setup($sh, true);
         return $this->save($ss, 'recapitulatif-agents-' . $b['settings']['session'] . '.xlsx');
     }

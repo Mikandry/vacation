@@ -1,12 +1,16 @@
+@php
+ $logo = ($s['show_logo'] ?? 'OUI') === 'OUI' ? \App\Support\Logo::uri() : null;
+ $real = \App\Support\Logo::isReal();
+@endphp
 <!doctype html><html><head><meta charset="utf-8"><style>
-@page{margin:26px 34px} body{font-family:'DejaVu Serif',serif;font-size:9pt;color:#000}
+@page{margin:22px 34px} body{font-family:'DejaVu Serif',serif;font-size:9pt;color:#000}
 p{margin:0 0 4px} .j{text-align:justify} table.t{width:100%;border-collapse:collapse;margin-top:4px} table.t th,table.t td{border:1px solid #000;padding:2px 5px;font-size:8.5pt}
 table.t th{text-align:center} .c{text-align:center} .tail{font-weight:bold;font-style:italic;margin:5px 0}
 </style></head><body>
-@if(($s['show_flag'] ?? 'OUI') === 'OUI')
+@if($logo)
 <div class="c" style="margin-bottom:6px">
- <img src="{{ \App\Support\Flag::dataUri() }}" width="62" height="41"><br>
- <b style="font-size:8pt">{{ $s['republic'] }}</b><br><i style="font-size:7pt">{{ $s['motto'] }}</i>
+ <img src="{{ $logo }}" height="{{ $real ? 52 : 41 }}">
+ @if(!$real)<br><b style="font-size:8pt">{{ $s['republic'] }}</b><br><i style="font-size:7pt">{{ $s['motto'] }}</i>@endif
 </div>
 @endif
 <table width="100%"><tr><td width="38%" class="c" style="vertical-align:top">{{ $s['ministry'] }}<br>--------------</td>
