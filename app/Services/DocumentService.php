@@ -3,6 +3,7 @@ namespace App\Services;
 
 use App\Models\Activity;
 use App\Models\Agent;
+use App\Models\AgentSubgroup;
 use App\Models\Setting;
 use App\Models\Visa;
 use App\Support\Words;
@@ -21,20 +22,69 @@ class DocumentService
      */
     public function data(Activity $activity, array $opt = []): array
     {
+        $all = Agent::whereHas('assignments', fn($q) => $q->where('activity_id', $activity->id))->get();
+        $byName = fn($a) => Str::upper(Str::ascii($a->name));
+
+        if (!$activity->is_quarantine) {
+            $d = $this->build($activity, $all->sortBy($byName)->values(), $opt, null);
+            $d['quarantine'] = false;
+            $d['groups'] = [];
+            $d['parts'] = [$d];
+            return $d;
+        }
+
+        // ---- quarantaine : OG, Superviseur, Coordonateur, Sous pli (+ « Non réparti » s'il reste des agents sans sous-groupe)
+        $map = AgentSubgroup::where('activity_id', $activity->id)->pluck('subgroup', 'agent_id');
+        $labels = Activity::SUBGROUPS + ['NR' => 'Non réparti'];
+        $buckets = array_fill_keys(array_keys($labels), []);
+        foreach ($all as $ag) {
+            $k = $map[$ag->id] ?? 'NR';
+            $buckets[isset($labels[$k]) ? $k : 'NR'][] = $ag;
+        }
+        $ordered = collect();
+        $groups = [];
+        $parts = [];
+        $offset = 0;
+        foreach ($buckets as $key => $list) {
+            if (!count($list)) continue;
+            $rows = collect($list)->sortBy($byName)->values();
+            $ordered = $ordered->concat($rows);
+            $groups[] = [
+                'key' => $key, 'label' => $labels[$key], 'rows' => $rows, 'n' => $rows->count(),
+                'nWords' => mb_strtoupper(Words::of($rows->count())), 'offset' => $offset,
+                'chunks' => $this->chunk($rows, $offset, count($groups) === 0 ? self::FIRST_PAGE : self::NEXT_PAGES),
+            ];
+            $offset += $rows->count();
+            $parts[] = $this->build($activity, $rows, $opt, ['key' => $key, 'label' => $labels[$key]]);
+        }
+        $d = $this->build($activity, $ordered->values(), $opt, null);
+        $d['quarantine'] = true;
+        $d['groups'] = $groups;
+        $d['parts'] = $parts ?: [$d];
+        return $d;
+    }
+
+    /** Découpe une liste d'agents en pages de la décision (première page : $firstSize lignes, puis 34). */
+    private function chunk($agents, int $offset0, int $firstSize): array
+    {
+        $chunks = []; $i = 0; $size = $firstSize; $n = $agents->count();
+        while ($i < $n || $i === 0) {
+            $part = $agents->slice($i, $size)->values();
+            $chunks[] = ['offset' => $offset0 + $i, 'local' => $i, 'rows' => $part, 'words' => Words::of($part->count())];
+            $i += $size;
+            $size = self::NEXT_PAGES;
+        }
+        return $chunks;
+    }
+
+    /** Données d'un document pour une liste d'agents (toute l'activité, ou un seul sous-groupe). */
+    private function build(Activity $activity, $agents, array $opt, ?array $sub): array
+    {
         $s = Setting::all_();
-        $agents = Agent::whereHas('assignments', fn($q) => $q->where('activity_id', $activity->id))->get()
-            ->sortBy(fn($a) => Str::upper(Str::ascii($a->name)))->values();
         $n = $agents->count();
 
         // ---- décision : pages de 30 puis 34 lignes
-        $chunks = []; $i = 0; $first = true;
-        while ($i < $n || $first) {
-            $size = $first ? self::FIRST_PAGE : self::NEXT_PAGES;
-            $part = $agents->slice($i, $size)->values();
-            $chunks[] = ['offset' => $i, 'rows' => $part, 'words' => Words::of($part->count())];
-            $i += $size;
-            $first = false;
-        }
+        $chunks = $this->chunk($agents, 0, self::FIRST_PAGE);
 
         // ---- IRSA et décompte
         $irsaRate = (isset($opt['irsa']) && is_numeric($opt['irsa']))
@@ -80,6 +130,7 @@ class DocumentService
         $totalMoney = $n * $gross;
         return [
             'a' => $activity, 's' => $s, 'agents' => $agents, 'n' => $n,
+            'sub' => $sub['label'] ?? null, 'subKey' => $sub['key'] ?? null,
             'nWords' => mb_strtoupper(Words::of($n)),
             'visas' => Visa::where('included', true)->orderBy('position')->orderBy('id')->get(),
             'chunks' => $chunks,
@@ -128,11 +179,14 @@ class DocumentService
     {
         $a = $d['a'];
         $s = $d['s'];
+        $sub = $d['sub'] ?? null;
+        $suf = $sub ? ' – ' . $sub : '';   // « Quarantaine – Superviseur »
         return strtr($tpl, [
-            '{activite}' => (string) $a->name,
-            '{code}' => (string) $a->code,
-            '{titre}' => (string) $a->title,
-            '{TITRE}' => mb_strtoupper((string) $a->title),
+            '{sousgroupe}' => (string) $sub,
+            '{activite}' => (string) $a->name . $suf,
+            '{code}' => (string) $a->code . $suf,
+            '{titre}' => (string) $a->title . $suf,
+            '{TITRE}' => mb_strtoupper((string) $a->title . $suf),
             '{session}' => (string) $s['session'],
             '{jours}' => (string) $a->days,
             '{agents}' => (string) $d['n'],
@@ -177,5 +231,11 @@ class DocumentService
     {
         $c = $chunk['rows']->count();
         return $c ? 'Arrêtée la présente page au nombre de ' . $chunk['words'] . ' agent' . ($c > 1 ? 's' : '') . ' (' . $c . ').' : '';
+    }
+
+    /** « Arrêté le sous-groupe Superviseur au nombre de QUATRE (4) agents. » */
+    public function groupTail(array $g): string
+    {
+        return 'Arrêté le sous-groupe « ' . $g['label'] . ' » au nombre de ' . $g['nWords'] . ' (' . $g['n'] . ') agent' . ($g['n'] > 1 ? 's' : '') . '.';
     }
 }

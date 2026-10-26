@@ -4,10 +4,42 @@ use Illuminate\Database\Eloquent\Model;
 
 class Activity extends Model
 {
-    protected $fillable = ['code', 'name', 'title', 'days', 'rate', 'quota', 'decree_total', 'start_date', 'position', 'active', 'manual', 'note_number'];
-protected $casts = ['start_date' => 'date', 'active' => 'boolean', 'manual' => 'boolean'];
+    protected $fillable = ['code', 'name', 'title', 'days', 'rate', 'quota', 'decree_total', 'start_date', 'position', 'active', 'manual', 'note_number', 'subgroups'];
+protected $casts = ['start_date' => 'date', 'active' => 'boolean', 'manual' => 'boolean', 'subgroups' => 'array'];
 
     public function getAmountAttribute(): int { return (int)$this->days * (int)$this->rate; }
+
+    /** Sous-groupes de la quarantaine, dans l'ordre d'impression. */
+    public const SUBGROUPS = [
+        'OG' => 'Organisation générale',
+        'SUP' => 'Superviseur',
+        'COORD' => 'Coordonateur',
+        'SP' => 'Sous pli',
+    ];
+
+    /** Vrai si l'activité est la quarantaine (détectée sur le code ou le nom). */
+    public function getIsQuarantineAttribute(): bool
+    {
+        $t = \Illuminate\Support\Str::lower(\Illuminate\Support\Str::ascii($this->code . ' ' . $this->name));
+        return str_contains($t, 'quarantaine');
+    }
+
+    /** Effectif prévu par sous-groupe : ['OG'=>n, 'SUP'=>n, 'COORD'=>n, 'SP'=>n]. */
+    public function getSubgroupCountsAttribute(): array
+    {
+        $raw = (array) ($this->subgroups ?? []);
+        $out = [];
+        foreach (array_keys(self::SUBGROUPS) as $k) $out[$k] = max(0, (int) ($raw[$k] ?? 0));
+        return $out;
+    }
+
+    /** Nombre total d'agents de l'activité : plafond de la somme des sous-groupes. */
+    public function getAgentCapAttribute(): int
+    {
+        return (int) ($this->decree_total > 0 ? $this->decree_total : $this->quota);
+    }
+
+    public function agentSubgroups() { return $this->hasMany(AgentSubgroup::class); }
     public function assignments() { return $this->hasMany(Assignment::class); }
     public function exceptions() { return $this->hasMany(AgentException::class); }
     public function agents() { return $this->belongsToMany(Agent::class, 'assignments')->withPivot('forced'); }

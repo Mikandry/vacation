@@ -20,12 +20,23 @@ table.t th{text-align:center} .c{text-align:center} .tail{font-weight:bold;font-
 <div style="page-break-before:always"></div>
 <p><b>DECIDE :</b></p>
 <p class="j">{{ $docs->article1(get_defined_vars()) }}</p>
+@if($quarantine)
+@foreach($groups as $g)
+<p style="margin:8px 0 2px"><b>{{ mb_strtoupper($g['label']) }}</b></p>
+@foreach($g['chunks'] as $ch)
+<table class="t"><thead><tr><th width="11%">N° d’ordre</th><th width="7%">n°</th><th>NOM ET PRENOMS</th><th width="13%">IM</th><th width="22%">LOCALITE DE SERVICE</th></tr></thead>
+@foreach($ch['rows'] as $k=>$ag)<tr style="page-break-inside:avoid"><td class="c">{{ $ch['offset']+$k+1 }}</td><td class="c">{{ $ch['local']+$k+1 }}</td><td>{{ $ag->name }}</td><td class="c">{{ $ag->im }}</td><td class="c">{{ $ag->locality }}</td></tr>@endforeach</table>
+@if($loop->last)<p class="tail">{{ $docs->groupTail($g) }}</p>@else<p class="tail">{{ $docs->pageTail($ch) }}</p><div style="page-break-after:always"></div>@endif
+@endforeach
+@endforeach
+@else
 @foreach($chunks as $ch)
 <table class="t"><thead><tr><th width="11%">N° d’ordre</th><th width="7%">n°</th><th>NOM ET PRENOMS</th><th width="13%">IM</th><th width="22%">LOCALITE DE SERVICE</th></tr></thead>
 @foreach($ch['rows'] as $k=>$ag)<tr><td class="c">{{ $ch['offset']+$k+1 }}</td><td class="c">{{ $k+1 }}</td><td>{{ $ag->name }}</td><td class="c">{{ $ag->im }}</td><td class="c">{{ $ag->locality }}</td></tr>@endforeach</table>
 <p class="tail">{{ $docs->pageTail($ch) }}</p>
 @if(!$loop->last)<div style="page-break-after:always"></div>@endif
 @endforeach
+@endif
 <p style="margin-top:8px"><b>ARRETEE LA PRESENTE DECISION AU NOMBRE DE {{ $nWords }} ({{ $n }}) AGENTS.</b></p>
 <p class="j" style="margin-top:6px">{{ $docs->article2(get_defined_vars()) }}</p>
 <p>Cette indemnité est imputable sur la ligne budgétaire :</p>

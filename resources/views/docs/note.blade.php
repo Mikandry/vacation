@@ -29,7 +29,16 @@ table.t th{text-align:center} thead{display:table-header-group} tr{page-break-in
  </td></tr></table>
 <p class="j" style="margin-top:14px;line-height:1.6;text-indent:28px">{{ $docs->tpl($s['note_intro'], get_defined_vars()) }}</p>
 <table class="t"><thead><tr><th width="6%">N°</th><th width="51%">NOM ET PRENOMS</th><th width="14%">IM</th><th width="29%">LOCALITE</th></tr></thead>
+@if($quarantine)
+@php $num_i = 0; @endphp
+@foreach($groups as $g)
+<tr><td colspan="4" style="background:#eee;font-weight:bold">{{ mb_strtoupper($g['label']) }}</td></tr>
+@foreach($g['rows'] as $ag)@php $num_i++; @endphp<tr><td style="text-align:right">{{ $num_i }}</td><td>{{ $ag->name }}</td><td class="c">{{ $ag->im }}</td><td class="c">{{ $ag->locality }}</td></tr>@endforeach
+<tr><td colspan="4" style="font-weight:bold;font-style:italic">{{ $docs->groupTail($g) }}</td></tr>
+@endforeach
+@else
 @foreach($agents as $i=>$ag)<tr><td style="text-align:right">{{ $i+1 }}</td><td>{{ $ag->name }}</td><td class="c">{{ $ag->im }}</td><td class="c">{{ $ag->locality }}</td></tr>@endforeach
+@endif
 </table>
 <div style="page-break-inside:avoid">
 <p class="j" style="margin-top:14px;line-height:1.6">{{ $docs->tpl($s['note_closing'], get_defined_vars()) }}</p>

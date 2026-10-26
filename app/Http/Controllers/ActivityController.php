@@ -3,6 +3,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Activity;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class ActivityController extends Controller
 {
@@ -20,6 +21,8 @@ class ActivityController extends Controller
             'note_number' => 'nullable|string|max:120',
             'position' => 'nullable|integer|min:0',
             'active' => 'nullable|boolean',
+            'sub' => 'nullable|array',
+            'sub.*' => 'nullable|integer|min:0',
         ];
     }
 
@@ -63,6 +66,21 @@ class ActivityController extends Controller
         $d['active'] = $r->boolean('active');
         $d['decree_total'] = $d['decree_total'] ?? 0;
         $d['position'] = $d['position'] ?? 0;
+
+        // ---- quarantaine : répartition en sous-groupes (OG, Superviseur, Coordonateur, Sous pli)
+        $probe = new Activity(['code' => $d['code'], 'name' => $d['name']]);
+        $d['subgroups'] = null;
+        if ($probe->is_quarantine) {
+            $sub = [];
+            foreach (array_keys(Activity::SUBGROUPS) as $k) $sub[$k] = (int) ($d['sub'][$k] ?? 0);
+            $cap = (int) ($d['decree_total'] > 0 ? $d['decree_total'] : $d['quota']);
+            $sum = array_sum($sub);
+            if ($sum > $cap) {
+                throw ValidationException::withMessages(['sub' => "La somme des sous-groupes ($sum) dépasse le nombre total d’agents de l’activité ($cap)."]);
+            }
+            $d['subgroups'] = $sub;
+        }
+        unset($d['sub']);
         return $d;
     }
 }

@@ -3,6 +3,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Activity;
 use App\Models\Agent;
+use App\Models\AgentSubgroup;
 use App\Models\Assignment;
 use App\Models\Setting;
 use App\Services\ConflictService;
@@ -10,6 +11,7 @@ use App\Services\DistributionService;
 use App\Services\ManualSelectionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class ManualController extends Controller
 {
@@ -86,13 +88,39 @@ class ManualController extends Controller
             'info' => $info,
             'localities' => $this->localities(),
             'selected' => Assignment::where('activity_id', $activity->id)->pluck('agent_id')->all(),
+            'subMap' => AgentSubgroup::where('activity_id', $activity->id)->pluck('subgroup', 'agent_id')->all(),
         ]);
     }
 
     public function save(Request $r, Activity $activity)
     {
-        $r->validate(['agents' => 'nullable|array', 'agents.*' => 'integer|exists:agents,id']);
+        $r->validate(['agents' => 'nullable|array', 'agents.*' => 'integer|exists:agents,id', 'sub' => 'nullable|array']);
+        $selected = collect($r->input('agents', []))->map(fn($i) => (int) $i)->unique();
+
+        // ---- quarantaine : sous-groupe de chaque agent coché, avec contrôle des effectifs
+        $subs = [];
+        if ($activity->is_quarantine) {
+            foreach ((array) $r->input('sub', []) as $agentId => $key) {
+                if ($selected->contains((int) $agentId) && isset(Activity::SUBGROUPS[$key])) $subs[(int) $agentId] = $key;
+            }
+            $planned = $activity->subgroup_counts;
+            $count = array_count_values($subs);
+            foreach (Activity::SUBGROUPS as $k => $label) {
+                if (array_sum($planned) > 0 && ($count[$k] ?? 0) > $planned[$k]) {
+                    throw ValidationException::withMessages(['sub' => "Sous-groupe « $label » : " . ($count[$k] ?? 0) . " agents choisis pour $planned[$k] prévus."]);
+                }
+            }
+            if ($activity->agent_cap > 0 && count($subs) > $activity->agent_cap) {
+                throw ValidationException::withMessages(['sub' => 'Le total réparti dans les sous-groupes (' . count($subs) . ') dépasse le nombre d’agents de l’activité (' . $activity->agent_cap . ').']);
+            }
+        }
+
         $this->svc->sync($activity, $r->input('agents', []), $r->boolean('manual_mode'));
+
+        if ($activity->is_quarantine) {
+            AgentSubgroup::where('activity_id', $activity->id)->delete();
+            foreach ($subs as $agentId => $key) AgentSubgroup::create(['agent_id' => $agentId, 'activity_id' => $activity->id, 'subgroup' => $key]);
+        }
         return redirect()->route('choix.show', $activity)->with('ok', 'Sélection enregistrée et répartition recalculée.');
     }
 

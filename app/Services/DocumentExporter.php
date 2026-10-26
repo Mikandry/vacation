@@ -56,13 +56,26 @@ class DocumentExporter
         match ($type) {
             'decision' => $this->wordDecision($w, $d),
             'note' => $this->wordNote($w, $d),
-            'presence' => $this->wordPresence($w, $d),
-            'etat' => $this->wordEtat($w, $d),
-            'decompte' => $this->wordDecompte($w, $d),
+            'presence' => $this->eachPart($d, fn($p) => $this->wordPresence($w, $p)),
+            'etat' => $this->eachPart($d, fn($p) => $this->wordEtat($w, $p)),
+            'decompte' => $this->eachPart($d, fn($p) => $this->wordDecompte($w, $p)),
         };
         $tmp = $this->tmp();
         IOFactory::createWriter($w, 'Word2007')->save($tmp);
         return $this->send($tmp, "{$type}-{$d['file']}.docx");
+    }
+
+    /** Applique $fn à chaque partie du document : toute l'activité, ou un sous-groupe à la fois (quarantaine). */
+    private function eachPart(array $d, callable $fn): void
+    {
+        foreach ($d['parts'] as $p) $fn($p);
+    }
+
+    /** Nom d'onglet Excel (31 caractères max, sans caractères interdits) avec le sous-groupe. */
+    private function sheetName(string $base, array $d): string
+    {
+        $n = ($d['sub'] ?? null) ? $d['sub'] . ' - ' . $base : $base;
+        return mb_substr(str_replace([':', '\\', '/', '?', '*', '[', ']'], ' ', $n), 0, 31);
     }
 
     /** Logo de Madagascar, centré, TOUT EN HAUT du document. */
@@ -108,22 +121,29 @@ class DocumentExporter
         $sec->addPageBreak();
         $sec->addText('DECIDE :', ['bold' => true]);
         $sec->addText($this->docs->article1($d), [], ['alignment' => 'both']);
-        $last = count($d['chunks']) - 1;
-        foreach ($d['chunks'] as $i => $ch) {
-            $t = $sec->addTable('grid');
-            $h = $t->addRow(null, ['tblHeader' => true]);
-            foreach ([[900, 'N° d’ordre'], [600, 'n°'], [4700, 'NOM ET PRENOMS'], [1200, 'IM'], [2400, 'LOCALITE DE SERVICE']] as [$wd, $tx])
-                $h->addCell($wd)->addText($tx, ['bold' => true, 'size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
-            foreach ($ch['rows'] as $k => $a) {
-                $row = $t->addRow(null, ['cantSplit' => true]);
-                $row->addCell(900)->addText((string) ($ch['offset'] + $k + 1), ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
-                $row->addCell(600)->addText((string) ($k + 1), ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
-                $row->addCell(4700)->addText($a->name, ['size' => 10], ['spaceAfter' => 0]);
-                $row->addCell(1200)->addText((string) $a->im, ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
-                $row->addCell(2400)->addText((string) $a->locality, ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
+        $blocks = $d['quarantine']
+            ? array_map(fn($g) => ['head' => mb_strtoupper($g['label']), 'chunks' => $g['chunks'], 'g' => $g], $d['groups'])
+            : [['head' => null, 'chunks' => $d['chunks'], 'g' => null]];
+        foreach ($blocks as $bi => $bk) {
+            if ($bk['head']) $sec->addText($bk['head'], ['bold' => true], ['spaceBefore' => 120]);
+            $last = count($bk['chunks']) - 1;
+            foreach ($bk['chunks'] as $i => $ch) {
+                $t = $sec->addTable('grid');
+                $h = $t->addRow(null, ['tblHeader' => true]);
+                foreach ([[900, 'N° d’ordre'], [600, 'n°'], [4700, 'NOM ET PRENOMS'], [1200, 'IM'], [2400, 'LOCALITE DE SERVICE']] as [$wd, $tx])
+                    $h->addCell($wd)->addText($tx, ['bold' => true, 'size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
+                foreach ($ch['rows'] as $k => $a) {
+                    $row = $t->addRow(null, ['cantSplit' => true]);
+                    $row->addCell(900)->addText((string) ($ch['offset'] + $k + 1), ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
+                    $row->addCell(600)->addText((string) (($bk['g'] ? $ch['local'] : 0) + $k + 1), ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
+                    $row->addCell(4700)->addText($a->name, ['size' => 10], ['spaceAfter' => 0]);
+                    $row->addCell(1200)->addText((string) $a->im, ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
+                    $row->addCell(2400)->addText((string) $a->locality, ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
+                }
+                $tail = ($bk['g'] && $i === $last) ? $this->docs->groupTail($bk['g']) : $this->docs->pageTail($ch);
+                $sec->addText($tail, ['bold' => true, 'italic' => true, 'size' => 10]);
+                if ($i < $last || (!$bk['g'] && $i < $last)) $sec->addPageBreak();
             }
-            $sec->addText($this->docs->pageTail($ch), ['bold' => true, 'italic' => true, 'size' => 10]);
-            if ($i < $last) $sec->addPageBreak();
         }
         $sec->addText("ARRETEE LA PRESENTE DECISION AU NOMBRE DE {$d['nWords']} ({$d['n']}) AGENTS.", ['bold' => true]);
         $sec->addText($this->docs->article2($d), [], ['alignment' => 'both']);
@@ -173,12 +193,24 @@ class DocumentExporter
         $cols = [[610, 'N°'], [5091, 'NOM ET PRENOMS'], [1394, 'IM'], [2823, 'LOCALITE']];
         $h = $t->addRow(500, ['tblHeader' => true, 'cantSplit' => true]);
         foreach ($cols as [$wd, $tx]) $h->addCell($wd, ['valign' => 'center'])->addText($tx, ['bold' => true], ['alignment' => 'center']);
-        foreach ($d['agents'] as $i => $ag) {
+        $noteRow = function ($i, $ag) use ($t) {
             $r = $t->addRow(500, ['cantSplit' => true]);
-            $r->addCell(610, ['valign' => 'center'])->addText((string) ($i + 1), [], ['alignment' => 'right']);
+            $r->addCell(610, ['valign' => 'center'])->addText((string) $i, [], ['alignment' => 'right']);
             $r->addCell(5091, ['valign' => 'center'])->addText($ag->name);
             $r->addCell(1394, ['valign' => 'center'])->addText((string) $ag->im, [], ['alignment' => 'center']);
             $r->addCell(2823, ['valign' => 'center'])->addText((string) $ag->locality, [], ['alignment' => 'center']);
+        };
+        if ($d['quarantine']) {
+            $num = 0;
+            foreach ($d['groups'] as $g) {
+                $hr = $t->addRow(400, ['cantSplit' => true]);
+                $hr->addCell(9918, ['gridSpan' => 4, 'valign' => 'center', 'bgColor' => 'EEEEEE'])->addText(mb_strtoupper($g['label']), ['bold' => true]);
+                foreach ($g['rows'] as $ag) $noteRow(++$num, $ag);
+                $tr = $t->addRow(400, ['cantSplit' => true]);
+                $tr->addCell(9918, ['gridSpan' => 4, 'valign' => 'center'])->addText($this->docs->groupTail($g), ['bold' => true, 'italic' => true]);
+            }
+        } else {
+            foreach ($d['agents'] as $i => $ag) $noteRow($i + 1, $ag);
         }
         $sec->addTextBreak(1);
         $sec->addText($this->docs->tpl($s['note_closing'], $d), [], ['alignment' => 'both', 'lineHeight' => 1.5]);
@@ -409,12 +441,18 @@ class DocumentExporter
     {
         $ss = new Spreadsheet();
         $ss->getDefaultStyle()->getFont()->setName('Arial')->setSize(10);
-        match ($type) {
-            'decision' => $this->excelDecision($ss, $d),
-            'presence' => $this->excelPresence($ss, $d),
-            'decompte' => $this->excelDecompte($ss, $d),
-            default => $this->excelEtat($ss, $d),
-        };
+        if ($type === 'decision') {
+            $this->excelDecision($ss, $d);
+        } else {
+            foreach ($d['parts'] as $pi => $p) {   // une feuille (ou série de feuilles) par sous-groupe
+                match ($type) {
+                    'presence' => $this->excelPresence($ss, $p, $pi),
+                    'decompte' => $this->excelDecompte($ss, $p, $pi),
+                    default => $this->excelEtat($ss, $p, $pi),
+                };
+            }
+            $ss->setActiveSheetIndex(0);
+        }
         return $this->save($ss, "{$type}-{$d['file']}.xlsx");
     }
 
@@ -451,23 +489,36 @@ class DocumentExporter
             $sh->setCellValue(Coordinate::stringFromColumnIndex($i + 1) . $row, $t);
         $this->head($sh, "A$row:E$row");
         $row++;
-        foreach ($d['chunks'] as $ch) {
-            foreach ($ch['rows'] as $k => $ag) {
-                $sh->setCellValue("A$row", $ch['offset'] + $k + 1);
-                $sh->setCellValue("B$row", $k + 1);
-                $sh->setCellValue("C$row", $ag->name);
-                $sh->setCellValueExplicit("D$row", (string) $ag->im, DataType::TYPE_STRING);
-                $sh->setCellValue("E$row", (string) $ag->locality);
-                $sh->getStyle("A$row:E$row")->getAlignment()->setWrapText(true)->setVertical('center');
-                $sh->getStyle("A$row:B$row")->getAlignment()->setHorizontal('center');
-                $sh->getStyle("D$row:E$row")->getAlignment()->setHorizontal('center');
-                $sh->getRowDimension($row)->setRowHeight(max(16, 13 * max($this->lines($ag->name, 46), $this->lines($ag->locality, 24)) + 4));
+        $blocks = $d['quarantine']
+            ? array_map(fn($g) => ['head' => mb_strtoupper($g['label']), 'chunks' => $g['chunks'], 'g' => $g], $d['groups'])
+            : [['head' => null, 'chunks' => $d['chunks'], 'g' => null]];
+        foreach ($blocks as $bk) {
+            if ($bk['head']) {
+                $sh->setCellValue("A$row", $bk['head']); $sh->mergeCells("A$row:E$row");
+                $sh->getStyle("A$row")->getFont()->setBold(true);
+                $sh->getStyle("A$row:E$row")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('EEEEEE');
                 $row++;
             }
-            if ($ch['rows']->count()) {
-                $sh->setCellValue("A$row", $this->docs->pageTail($ch)); $sh->mergeCells("A$row:E$row");
-                $sh->getStyle("A$row")->getFont()->setItalic(true)->setBold(true);
-                $row++;
+            $lastCh = count($bk['chunks']) - 1;
+            foreach ($bk['chunks'] as $ci => $ch) {
+                foreach ($ch['rows'] as $k => $ag) {
+                    $sh->setCellValue("A$row", $ch['offset'] + $k + 1);
+                    $sh->setCellValue("B$row", ($bk['g'] ? $ch['local'] : 0) + $k + 1);
+                    $sh->setCellValue("C$row", $ag->name);
+                    $sh->setCellValueExplicit("D$row", (string) $ag->im, DataType::TYPE_STRING);
+                    $sh->setCellValue("E$row", (string) $ag->locality);
+                    $sh->getStyle("A$row:E$row")->getAlignment()->setWrapText(true)->setVertical('center');
+                    $sh->getStyle("A$row:B$row")->getAlignment()->setHorizontal('center');
+                    $sh->getStyle("D$row:E$row")->getAlignment()->setHorizontal('center');
+                    $sh->getRowDimension($row)->setRowHeight(max(16, 13 * max($this->lines($ag->name, 46), $this->lines($ag->locality, 24)) + 4));
+                    $row++;
+                }
+                if ($ch['rows']->count()) {
+                    $tail = ($bk['g'] && $ci === $lastCh) ? $this->docs->groupTail($bk['g']) : $this->docs->pageTail($ch);
+                    $sh->setCellValue("A$row", $tail); $sh->mergeCells("A$row:E$row");
+                    $sh->getStyle("A$row")->getFont()->setItalic(true)->setBold(true);
+                    $row++;
+                }
             }
         }
         $this->box($sh, "A$start:E" . ($row - 1));
@@ -496,7 +547,7 @@ class DocumentExporter
     }
 
     /** Présence : une feuille Excel par série de jours (15 colonnes max), logo tout en haut. */
-    private function excelPresence(Spreadsheet $ss, array $d): void
+    private function excelPresence(Spreadsheet $ss, array $d, int $pi = 0): void
     {
         $s = $d['s'];
         $rh = max(18, (int) $s['presence_row_height']);
@@ -504,8 +555,8 @@ class DocumentExporter
         $nSeries = count($d['series']);
 
         foreach ($d['series'] as $si => $sr) {
-            $sh = $si === 0 ? $ss->getActiveSheet() : $ss->createSheet();
-            $sh->setTitle($nSeries > 1 ? 'Feuille ' . ($si + 1) : 'Présence');
+            $sh = ($pi === 0 && $si === 0) ? $ss->getActiveSheet() : $ss->createSheet();
+            $sh->setTitle($this->sheetName($nSeries > 1 ? 'Feuille ' . ($si + 1) : 'Présence', $d));
             $cols = $sr['cols'];
             $first = 5;
             $last = Coordinate::stringFromColumnIndex(4 + $cols);
@@ -567,15 +618,14 @@ class DocumentExporter
             $sh->getPageSetup()->setRowsToRepeatAtTopByStartAndEnd($top, $top + 1);
             $this->setup($sh, true);
         }
-        $ss->setActiveSheetIndex(0);
     }
 
-    private function excelEtat(Spreadsheet $ss, array $d): void
+    private function excelEtat(Spreadsheet $ss, array $d, int $pi = 0): void
     {
-        $sh = $ss->getActiveSheet();
+        $sh = $pi === 0 ? $ss->getActiveSheet() : $ss->createSheet();
         $s = $d['s'];
         $a = $d['a'];
-        $sh->setTitle('État de vacations');
+        $sh->setTitle($this->sheetName('État de vacations', $d));
         $widths = [5, 44, 12, 20, 7, 12, 14, 22];
         foreach ($widths as $i => $wd) $sh->getColumnDimension(Coordinate::stringFromColumnIndex($i + 1))->setWidth($wd);
 
@@ -617,12 +667,12 @@ class DocumentExporter
     }
 
     /** Décompte : logo en haut, bloc ministère, taux IRSA dans une cellule (tous les montants se recalculent si on la modifie). */
-    private function excelDecompte(Spreadsheet $ss, array $d): void
+    private function excelDecompte(Spreadsheet $ss, array $d, int $pi = 0): void
     {
-        $sh = $ss->getActiveSheet();
+        $sh = $pi === 0 ? $ss->getActiveSheet() : $ss->createSheet();
         $s = $d['s'];
         $a = $d['a'];
-        $sh->setTitle('Décompte');
+        $sh->setTitle($this->sheetName('Décompte', $d));
         $widths = [5, 40, 12, 20, 7, 11, 14, 13, 15];
         foreach ($widths as $i => $wd) $sh->getColumnDimension(Coordinate::stringFromColumnIndex($i + 1))->setWidth($wd);
 

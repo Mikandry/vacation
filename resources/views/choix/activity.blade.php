@@ -37,6 +37,20 @@
  </div>
 </form>
 
+@if($act->is_quarantine)
+<div class="card card-body mb-3">
+ <div class="fw-bold mb-1">Sous-groupes de la quarantaine</div>
+ <div class="small text-muted mb-2">Cochez les agents, puis choisissez leur sous-groupe. Les effectifs prévus se règlent dans « Modifier » l’activité ; le total ne peut pas dépasser {{ $act->agent_cap }} agents.</div>
+ @error('sub')<div class="alert alert-danger py-1 small">{{ $message }}</div>@enderror
+ <div class="row g-2">
+  @foreach(\App\Models\Activity::SUBGROUPS as $k=>$lb)
+  <div class="col-6 col-md-3"><div class="kpi"><div class="l">{{ $lb }}</div><div class="v"><span id="sg-{{ $k }}">0</span> / {{ $act->subgroup_counts[$k] }}</div></div></div>
+  @endforeach
+ </div>
+ <div class="small mt-1" id="sg-warn"></div>
+</div>
+@endif
+
 <form method="post" action="{{ route('choix.save',$act) }}">
  @csrf
  <div class="card card-body mb-2">
@@ -63,6 +77,7 @@
     <th>IM</th>
     <th>Localité</th>
     <th>Type</th>
+    @if($act->is_quarantine)<th style="min-width:170px">Sous-groupe</th>@endif
     <th>Fonction</th>
     <th>Autres activités</th>
     <th>⚠ Conflit de dates</th>
@@ -76,6 +91,7 @@
    <td>{{ $ag->im }}</td>
    <td>{{ $ag->locality }}</td>
    <td><span class="badge text-bg-{{ $ag->type=='DIRECTION'?'primary':'info' }}">{{ $ag->type }}</span></td>
+   @if($act->is_quarantine)<td><select name="sub[{{ $ag->id }}]" class="form-select form-select-sm sg"><option value="">—</option>@foreach(\App\Models\Activity::SUBGROUPS as $k=>$lb)<option value="{{ $k }}" @selected(($subMap[$ag->id] ?? null)===$k)>{{ $lb }}</option>@endforeach</select></td>@endif
    <td class="small">{{ $ag->function }}</td>
    <td class="small">{{ $info[$ag->id]['codes'] }}</td>
    <td class="small text-danger fw-bold">{{ $info[$ag->id]['conflict'] }}</td>
@@ -139,5 +155,26 @@ none.onclick=()=>{
  recount();
 };
 recount();
+
+@if($act->is_quarantine)
+const PLAN={!! json_encode($act->subgroup_counts) !!}, CAP={{ $act->agent_cap }};
+function recountSg(){
+ const c={OG:0,SUP:0,COORD:0,SP:0}; let none=0;
+ rows.forEach(r=>{
+  const cb=r.querySelector('.cb'), sel=r.querySelector('.sg');
+  sel.disabled=!cb.checked;
+  if(cb.checked){ if(sel.value) c[sel.value]++; else none++; }
+ });
+ let tot=0, over=[];
+ for(const k in c){ document.getElementById('sg-'+k).textContent=c[k]; tot+=c[k]; if(PLAN[k]>0 && c[k]>PLAN[k]) over.push(k); }
+ const w=document.getElementById('sg-warn'); let m='';
+ if(over.length) m+='⚠ Effectif dépassé : '+over.join(', ')+'. ';
+ if(CAP>0 && tot>CAP) m+='⚠ Total réparti ('+tot+') > '+CAP+'. ';
+ if(none) m+=none+' agent(s) coché(s) sans sous-groupe (« Non réparti » dans les documents).';
+ w.className='small mt-1 fw-bold text-danger'; w.textContent=m;
+}
+rows.forEach(r=>{ r.querySelector('.sg').addEventListener('change',recountSg); r.querySelector('.cb').addEventListener('change',recountSg); });
+recountSg();
+@endif
 </script>
 @endpush
