@@ -21,10 +21,10 @@
  <td class="text-center text-nowrap">
   @if($a->assignments_count)
    @php $u=fn($f)=>route('documents.export',[$a,$t,$f]); $pv=route('documents.preview',[$a,$t]); @endphp
-   <a class="btn btn-sm btn-dark mb-1" @if($t==='decompte') data-dec="{{ $pv }}" @endif href="{{ $pv }}">👁 Aperçu</a><br>
-   <a class="btn btn-sm btn-outline-danger" @if($t==='decompte') data-dec="{{ $u('pdf') }}" @endif href="{{ $u('pdf') }}">PDF</a>
-   <a class="btn btn-sm btn-outline-primary" @if($t==='decompte') data-dec="{{ $u('docx') }}" @endif href="{{ $u('docx') }}">Word</a>
-   @if($t!=='note')<a class="btn btn-sm btn-outline-success" @if($t==='decompte') data-dec="{{ $u('xlsx') }}" @endif href="{{ $u('xlsx') }}">Excel</a>@endif
+   <a class="btn btn-sm btn-dark mb-1" @if(in_array($t,['decompte','etat'])) data-dec="{{ $pv }}" @endif href="{{ $pv }}">👁 Aperçu</a><br>
+   <a class="btn btn-sm btn-outline-danger" @if(in_array($t,['decompte','etat'])) data-dec="{{ $u('pdf') }}" @endif href="{{ $u('pdf') }}">PDF</a>
+   <a class="btn btn-sm btn-outline-primary" @if(in_array($t,['decompte','etat'])) data-dec="{{ $u('docx') }}" @endif href="{{ $u('docx') }}">Word</a>
+   @if($t!=='note')<a class="btn btn-sm btn-outline-success" @if(in_array($t,['decompte','etat'])) data-dec="{{ $u('xlsx') }}" @endif href="{{ $u('xlsx') }}">Excel</a>@endif
    @if($t==='presence')
     <div class="small text-muted mt-1">sans dates :
      <a href="{{ $u('pdf') }}?dates=0">PDF</a> · <a href="{{ $u('docx') }}?dates=0">Word</a> · <a href="{{ $u('xlsx') }}?dates=0">Excel</a></div>

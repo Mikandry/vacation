@@ -26,6 +26,10 @@ class SettingController extends Controller
             'presence_id_width' => 'required|integer|min:25|max:60',
             'presence_show_dates' => 'required|in:OUI,NON',
             'decompte_rows' => 'required|integer|min:5|max:60',
+            'decompte_safety' => 'nullable|integer|min:0|max:300',
+            'decision_art_indemnite' => 'required|in:OUI,NON',
+            'decision_articles_extra' => 'nullable|string',
+            'decision_art_final' => 'nullable|string',
         ]);
         Setting::put($r->only(array_keys(Setting::DEFAULTS)));
         return redirect()->route('settings.index')->with('ok', 'Paramètres enregistrés. Relancez la répartition si nécessaire.');

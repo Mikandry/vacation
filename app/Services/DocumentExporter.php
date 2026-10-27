@@ -114,50 +114,60 @@ class DocumentExporter
         $c = $r->addCell(3800);
         $c->addText($s['ministry'], [], ['alignment' => 'center']);
         $c->addText('--------------', [], ['alignment' => 'center']);
-        $r->addCell(6000)->addText($this->docs->decisionTitle($d), ['bold' => true], ['alignment' => 'both']);
+        $tc = $r->addCell(6000);
+        $tc->addText($this->docs->decisionTitle($d), ['bold' => true], ['alignment' => 'both']);
+        $tc->addText($this->docs->decisionSession($d), ['bold' => true], ['alignment' => 'center', 'spaceBefore' => 160]);
         $sec->addTextBreak(1);
         $sec->addText($s['authority'], ['bold' => true], ['alignment' => 'center']);
         foreach ($d['visas'] as $v) $sec->addText($v->text, ['size' => 10], ['alignment' => 'both', 'spaceAfter' => 0]);
         $sec->addPageBreak();
         $sec->addText('DECIDE :', ['bold' => true]);
         $sec->addText($this->docs->article1($d), [], ['alignment' => 'both']);
-        $blocks = $d['quarantine']
+                $blocks = $d['quarantine']
             ? array_map(fn($g) => ['head' => mb_strtoupper($g['label']), 'chunks' => $g['chunks'], 'g' => $g], $d['groups'])
             : [['head' => null, 'chunks' => $d['chunks'], 'g' => null]];
+        $lastBlock = count($blocks) - 1;
         foreach ($blocks as $bi => $bk) {
             if ($bk['head']) $sec->addText($bk['head'], ['bold' => true], ['spaceBefore' => 120]);
             $last = count($bk['chunks']) - 1;
             foreach ($bk['chunks'] as $i => $ch) {
+                $isFinal = ($bi === $lastBlock && $i === $last);   // dernière page de noms
+                $nRows = $ch['rows']->count();
                 $t = $sec->addTable('grid');
                 $h = $t->addRow(null, ['tblHeader' => true]);
                 foreach ([[900, 'N° d’ordre'], [600, 'n°'], [4700, 'NOM ET PRENOMS'], [1200, 'IM'], [2400, 'LOCALITE DE SERVICE']] as [$wd, $tx])
                     $h->addCell($wd)->addText($tx, ['bold' => true, 'size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
                 foreach ($ch['rows'] as $k => $a) {
+                    // les 2 derniers noms restent avec l'arrêtage, les articles et la signature (keepNext)
+                    $kn = $isFinal && $k >= $nRows - 2;
                     $row = $t->addRow(null, ['cantSplit' => true]);
-                    $row->addCell(900)->addText((string) ($ch['offset'] + $k + 1), ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
-                    $row->addCell(600)->addText((string) (($bk['g'] ? $ch['local'] : 0) + $k + 1), ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
-                    $row->addCell(4700)->addText($a->name, ['size' => 10], ['spaceAfter' => 0]);
-                    $row->addCell(1200)->addText((string) $a->im, ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
-                    $row->addCell(2400)->addText((string) $a->locality, ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
+                    $row->addCell(900)->addText((string) ($ch['offset'] + $k + 1), ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0, 'keepNext' => $kn]);
+                    $row->addCell(600)->addText((string) (($bk['g'] ? $ch['local'] : 0) + $k + 1), ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0, 'keepNext' => $kn]);
+                    $row->addCell(4700)->addText($a->name, ['size' => 10], ['spaceAfter' => 0, 'keepNext' => $kn]);
+                    $row->addCell(1200)->addText((string) $a->im, ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0, 'keepNext' => $kn]);
+                    $row->addCell(2400)->addText((string) $a->locality, ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0, 'keepNext' => $kn]);
                 }
                 $tail = ($bk['g'] && $i === $last) ? $this->docs->groupTail($bk['g']) : $this->docs->pageTail($ch);
-                $sec->addText($tail, ['bold' => true, 'italic' => true, 'size' => 10]);
-                if ($i < $last || (!$bk['g'] && $i < $last)) $sec->addPageBreak();
+                $sec->addText($tail, ['bold' => true, 'italic' => true, 'size' => 10], ['keepNext' => $isFinal]);
+                if ($i < $last) $sec->addPageBreak();
             }
         }
-        $sec->addText("ARRETEE LA PRESENTE DECISION AU NOMBRE DE {$d['nWords']} ({$d['n']}) AGENTS.", ['bold' => true]);
-        $sec->addText($this->docs->article2($d), [], ['alignment' => 'both']);
-        $sec->addText('Cette indemnité est imputable sur la ligne budgétaire :');
-        $b = $sec->addTable('grid');
-        $r1 = $b->addRow();
-        $r2 = $b->addRow();
-        foreach ([['Mission', 'budget_mission'], ['Indicateur d’objectif', 'budget_indicator'], ['Section', 'budget_section'], ['Compte', 'budget_account'], ['Code ORDSEC', 'budget_ordsec']] as [$lab, $key]) {
-            $r1->addCell(1960)->addText($lab, ['bold' => true, 'size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
-            $r2->addCell(1960)->addText($s[$key], ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
+        $sec->addText("ARRETEE LA PRESENTE DECISION AU NOMBRE DE {$d['nWords']} ({$d['n']}) AGENTS.", ['bold' => true], ['keepNext' => true]);
+        foreach ($this->docs->articles($d) as $art) {
+            $sec->addText($art['label'] . ' : ' . $art['text'], [], ['alignment' => 'both', 'keepNext' => true]);
+            if ($art['budget']) {
+                $sec->addText('Cette indemnité est imputable sur la ligne budgétaire :', [], ['keepNext' => true]);
+                $b = $sec->addTable('grid');
+                $r1 = $b->addRow(null, ['cantSplit' => true]);
+                $r2 = $b->addRow(null, ['cantSplit' => true]);
+                foreach ([['Mission', 'budget_mission'], ['Indicateur d’objectif', 'budget_indicator'], ['Section', 'budget_section'], ['Compte', 'budget_account'], ['Code ORDSEC', 'budget_ordsec']] as [$lab, $key]) {
+                    $r1->addCell(1960)->addText($lab, ['bold' => true, 'size' => 10], ['alignment' => 'center', 'spaceAfter' => 0, 'keepNext' => true]);
+                    $r2->addCell(1960)->addText($s[$key], ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0, 'keepNext' => true]);
+                }
+                $sec->addTextBreak(1, null, ['keepNext' => true]);
+            }
         }
-        $sec->addTextBreak(1);
-        $sec->addText('Article 3 : La présente décision sera enregistrée et communiquée partout où besoin sera.');
-        $sec->addText($this->docs->signDate($d), [], ['alignment' => 'right']);
+        $sec->addText($this->docs->signDate($d), [], ['alignment' => 'right', 'keepNext' => true]);
         $sec->addText($s['signatory'], ['bold' => true], ['alignment' => 'right']);
     }
 
@@ -193,30 +203,43 @@ class DocumentExporter
         $cols = [[610, 'N°'], [5091, 'NOM ET PRENOMS'], [1394, 'IM'], [2823, 'LOCALITE']];
         $h = $t->addRow(500, ['tblHeader' => true, 'cantSplit' => true]);
         foreach ($cols as [$wd, $tx]) $h->addCell($wd, ['valign' => 'center'])->addText($tx, ['bold' => true], ['alignment' => 'center']);
-        $noteRow = function ($i, $ag) use ($t) {
-            $r = $t->addRow(500, ['cantSplit' => true]);
-            $r->addCell(610, ['valign' => 'center'])->addText((string) $i, [], ['alignment' => 'right']);
-            $r->addCell(5091, ['valign' => 'center'])->addText($ag->name);
-            $r->addCell(1394, ['valign' => 'center'])->addText((string) $ag->im, [], ['alignment' => 'center']);
-            $r->addCell(2823, ['valign' => 'center'])->addText((string) $ag->locality, [], ['alignment' => 'center']);
-        };
+        // lignes : h = titre de sous-groupe, a = agent, f = arrêtage de sous-groupe
+        $nrows = [];
         if ($d['quarantine']) {
             $num = 0;
             foreach ($d['groups'] as $g) {
-                $hr = $t->addRow(400, ['cantSplit' => true]);
-                $hr->addCell(9918, ['gridSpan' => 4, 'valign' => 'center', 'bgColor' => 'EEEEEE'])->addText(mb_strtoupper($g['label']), ['bold' => true]);
-                foreach ($g['rows'] as $ag) $noteRow(++$num, $ag);
-                $tr = $t->addRow(400, ['cantSplit' => true]);
-                $tr->addCell(9918, ['gridSpan' => 4, 'valign' => 'center'])->addText($this->docs->groupTail($g), ['bold' => true, 'italic' => true]);
+                $nrows[] = ['h', mb_strtoupper($g['label'])];
+                foreach ($g['rows'] as $ag) $nrows[] = ['a', ++$num, $ag];
+                $nrows[] = ['f', $this->docs->groupTail($g)];
             }
         } else {
-            foreach ($d['agents'] as $i => $ag) $noteRow($i + 1, $ag);
+            foreach ($d['agents'] as $i => $ag) $nrows[] = ['a', $i + 1, $ag];
         }
-        $sec->addTextBreak(1);
-        $sec->addText($this->docs->tpl($s['note_closing'], $d), [], ['alignment' => 'both', 'lineHeight' => 1.5]);
-        $sec->addText($this->docs->tpl($s['note_place_date'], $d), [], ['alignment' => 'both', 'lineHeight' => 1.5, 'indentation' => ['left' => 4956, 'firstLine' => 708]]);
-        foreach (preg_split('/\R/', $s['note_signature']) as $line) {
-            $sec->addText($line, [], ['alignment' => 'center', 'lineHeight' => 1.5, 'indentation' => ['left' => 4956, 'firstLine' => 708]]);
+        // les 2 dernières lignes restent avec l'arrêtage, la date et la signature (keepNext) : jamais l'arrêtage seul sur une page
+        $keepFrom = max(0, count($nrows) - 2);
+        foreach ($nrows as $idx => $r) {
+            $kn = $idx >= $keepFrom;
+            $pr = fn(array $extra = []) => $extra + ['keepNext' => $kn];
+            if ($r[0] === 'h') {
+                $hr = $t->addRow(400, ['cantSplit' => true]);
+                $hr->addCell(9918, ['gridSpan' => 4, 'valign' => 'center', 'bgColor' => 'EEEEEE'])->addText($r[1], ['bold' => true], $pr());
+            } elseif ($r[0] === 'f') {
+                $tr = $t->addRow(400, ['cantSplit' => true]);
+                $tr->addCell(9918, ['gridSpan' => 4, 'valign' => 'center'])->addText($r[1], ['bold' => true, 'italic' => true], $pr());
+            } else {
+                $row = $t->addRow(500, ['cantSplit' => true]);
+                $row->addCell(610, ['valign' => 'center'])->addText((string) $r[1], [], $pr(['alignment' => 'right']));
+                $row->addCell(5091, ['valign' => 'center'])->addText($r[2]->name, [], $pr());
+                $row->addCell(1394, ['valign' => 'center'])->addText((string) $r[2]->im, [], $pr(['alignment' => 'center']));
+                $row->addCell(2823, ['valign' => 'center'])->addText((string) $r[2]->locality, [], $pr(['alignment' => 'center']));
+            }
+        }
+        $sec->addTextBreak(1, null, ['keepNext' => true]);
+        $sec->addText($this->docs->tpl($s['note_closing'], $d), [], ['alignment' => 'both', 'lineHeight' => 1.5, 'keepNext' => true]);
+        $sec->addText($this->docs->tpl($s['note_place_date'], $d), [], ['alignment' => 'both', 'lineHeight' => 1.5, 'keepNext' => true, 'indentation' => ['left' => 4956, 'firstLine' => 708]]);
+        $signLines = preg_split('/\R/', $s['note_signature']);
+        foreach ($signLines as $si => $line) {
+            $sec->addText($line, [], ['alignment' => 'center', 'lineHeight' => 1.5, 'keepNext' => $si < count($signLines) - 1, 'indentation' => ['left' => 4956, 'firstLine' => 708]]);
         }
     }
 
@@ -289,20 +312,24 @@ class DocumentExporter
         $this->wordLogoTop($sec, $s);
         $this->wordHeaderBlock($sec, $s, $d, 'etat_title', 'etat_line1', 'etat_line2', 15);
         $t = $sec->addTable('grid');
-        $cols = [[500, 'N°'], [3200, 'NOM ET PRENOMS'], [1000, 'IM'], [1500, 'LOCALITE'], [600, 'Jours'], [1000, 'Taux/jour'], [1200, 'Montant (Ar)'], [1300, 'ÉMARGEMENT']];
+        $cols = [[500, 'N°'], [3200, 'NOM ET PRENOMS'], [1000, 'IM'], [1500, 'LOCALITE'], [600, 'Jours'], [1000, 'Taux/jour'], [1200, 'Net à payer (Ar)'], [1300, 'ÉMARGEMENT']];
+        $ir = $t->addRow(null, ['tblHeader' => true]);   // IRSA en haut du tableau
+        $ir->addCell(10300, ['gridSpan' => 8, 'valign' => 'center'])->addText(
+            'Taux IRSA : ' . rtrim(rtrim(number_format($d['irsaRate'], 2, ',', ''), '0'), ',') . ' % — montant net à payer (IRSA déjà déduit)',
+            ['bold' => true, 'size' => 9], ['alignment' => 'right']);
         $h = $t->addRow(null, ['tblHeader' => true]);
         foreach ($cols as [$wd, $tx]) $h->addCell($wd, ['valign' => 'center'])->addText($tx, ['bold' => true, 'size' => 9], ['alignment' => 'center']);
         foreach ($d['agents'] as $i => $ag) {
             $r = $t->addRow(380, ['cantSplit' => true]);
-            $vals = [(string) ($i + 1), $ag->name, $this->docs->fmtIm($ag->im), (string) $ag->locality, (string) $a->days, $this->nf($a->rate), $this->nf($d['amount']), ''];
+            $vals = [(string) ($i + 1), $ag->name, $this->docs->fmtIm($ag->im), (string) $ag->locality, (string) $a->days, $this->nf($a->rate), $this->nf($d['net']), ''];
             foreach ($cols as $k => [$wd]) {
                 $al = $k === 1 ? 'left' : (in_array($k, [5, 6]) ? 'right' : 'center');
                 $r->addCell($wd, ['valign' => 'center'])->addText($vals[$k], ['size' => 9], ['alignment' => $al]);
             }
         }
         $sec->addTextBreak(1);
-        $sec->addText("TOTAL : {$d['n']} agent(s) — " . $this->nf($d['totalMoney']) . ' Ar', ['bold' => true]);
-        $sec->addText($this->docs->tpl($s['etat_footer'], $d), ['italic' => true]);
+        $sec->addText("TOTAL : {$d['n']} agent(s) — " . $this->nf($d['totalNet']) . ' Ar (net, IRSA déduit)', ['bold' => true]);
+        $sec->addText($this->docs->etatFooter($d), ['italic' => true]);
         $sec->addText($this->docs->signDate($d), [], ['alignment' => 'right']);
     }
 
@@ -469,6 +496,10 @@ class DocumentExporter
         $sh->getStyle("A$row")->getAlignment()->setWrapText(true)->setVertical('top');
         $sh->getStyle("A$row")->getFont()->setBold(true);
         $sh->getRowDimension($row)->setRowHeight(48);
+        $row++;
+        $sh->setCellValue("A$row", $this->docs->decisionSession($d)); $sh->mergeCells("A$row:E$row");
+        $sh->getStyle("A$row")->getAlignment()->setHorizontal('center');
+        $sh->getStyle("A$row")->getFont()->setBold(true);
         $row += 2;
         $sh->setCellValue("A$row", $s['authority']); $sh->mergeCells("A$row:E$row");
         $sh->getStyle("A$row")->getFont()->setBold(true); $row++;
@@ -526,18 +557,21 @@ class DocumentExporter
         $sh->setCellValue("A$row", "ARRETEE LA PRESENTE DECISION AU NOMBRE DE {$d['nWords']} ({$d['n']}) AGENTS.");
         $sh->getStyle("A$row")->getFont()->setBold(true);
         $row += 2;
-        $sh->setCellValue("A$row", $this->docs->article2($d)); $sh->mergeCells("A$row:E$row");
-        $sh->getStyle("A$row")->getAlignment()->setWrapText(true);
-        $sh->getRowDimension($row)->setRowHeight(30);
+        foreach ($this->docs->articles($d) as $art) {
+            $sh->setCellValue("A$row", $art['label'] . ' : ' . $art['text']); $sh->mergeCells("A$row:E$row");
+            $sh->getStyle("A$row")->getAlignment()->setWrapText(true)->setVertical('top');
+            $sh->getRowDimension($row)->setRowHeight(max(16, 15 * $this->lines($art['label'] . ' : ' . $art['text'], 100) + 2));
+            $row++;
+            if ($art['budget']) {
+                $sh->setCellValue("A$row", 'Cette indemnité est imputable sur la ligne budgétaire :'); $row++;
+                $sh->fromArray([['Mission', 'Indicateur d’objectif', 'Section', 'Compte', 'Code ORDSEC'],
+                    [$s['budget_mission'], $s['budget_indicator'], $s['budget_section'], $s['budget_account'], $s['budget_ordsec']]], null, "A$row");
+                $this->box($sh, "A$row:E" . ($row + 1));
+                $sh->getStyle("A$row:E$row")->getFont()->setBold(true);
+                $row += 3;
+            }
+        }
         $row++;
-        $sh->setCellValue("A$row", 'Cette indemnité est imputable sur la ligne budgétaire :'); $row++;
-        $sh->fromArray([['Mission', 'Indicateur d’objectif', 'Section', 'Compte', 'Code ORDSEC'],
-            [$s['budget_mission'], $s['budget_indicator'], $s['budget_section'], $s['budget_account'], $s['budget_ordsec']]], null, "A$row");
-        $this->box($sh, "A$row:E" . ($row + 1));
-        $sh->getStyle("A$row:E$row")->getFont()->setBold(true);
-        $row += 3;
-        $sh->setCellValue("A$row", 'Article 3 : La présente décision sera enregistrée et communiquée partout où besoin sera.');
-        $row += 2;
         $sh->setCellValue("A$row", $this->docs->signDate($d)); $sh->mergeCells("A$row:E$row");
         $sh->getStyle("A$row")->getAlignment()->setHorizontal('right'); $row++;
         $sh->setCellValue("A$row", $s['signatory']); $sh->mergeCells("A$row:E$row");
@@ -632,8 +666,17 @@ class DocumentExporter
         $o = $this->excelTop($sh, $s, $widths, 'H');
         $n = $this->excelHeaderBlock($sh, $s, $d, $o + 1, 'etat_title', 'etat_line1', 'etat_line2', 'C', 'D', 'H');
 
-        $hdr = $o + $n + 2;
-        $sh->fromArray(['N°', 'NOM ET PRENOMS', 'IM', 'LOCALITE', 'Jours', 'Taux / jour (Ar)', 'Montant (Ar)', 'ÉMARGEMENT'], null, "A$hdr");
+        $ir = $o + $n + 1;   // IRSA en haut du tableau : modifiable, le net à payer se recalcule
+        $sh->setCellValue("A$ir", 'Taux IRSA (%) :'); $sh->mergeCells("A$ir:B$ir");
+        $sh->getStyle("A$ir")->getAlignment()->setHorizontal('right');
+        $sh->setCellValue("C$ir", $d['irsaRate']);
+        $sh->getStyle("C$ir")->getFont()->setBold(true)->getColor()->setRGB('0000FF');
+        $sh->getStyle("C$ir")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('FFF9DB');
+        $this->box($sh, "C$ir");
+        $sh->setCellValue("D$ir", 'Montant net à payer (IRSA déjà déduit)');
+
+        $hdr = $ir + 2;
+        $sh->fromArray(['N°', 'NOM ET PRENOMS', 'IM', 'LOCALITE', 'Jours', 'Taux / jour (Ar)', 'Net à payer (Ar)', 'ÉMARGEMENT'], null, "A$hdr");
         $this->head($sh, "A$hdr:H$hdr");
         $sh->getRowDimension($hdr)->setRowHeight(28);
         $row = $hdr + 1;
@@ -646,7 +689,7 @@ class DocumentExporter
             $sh->setCellValue("D$row", (string) $ag->locality);
             $sh->setCellValue("E$row", $a->days);
             $sh->setCellValue("F$row", $a->rate);
-            $sh->setCellValue("G$row", "=E$row*F$row");
+            $sh->setCellValue("G$row", "=E$row*F$row-ROUND(E$row*F$row*\$C\$$ir/100,0)");
             $sh->getStyle("A$row:H$row")->getAlignment()->setVertical('center');
             $sh->getStyle("B$row")->getAlignment()->setWrapText(true);
             $sh->getStyle("D$row")->getAlignment()->setWrapText(true);
@@ -660,7 +703,7 @@ class DocumentExporter
         $sh->getStyle("A$row:G$row")->getFont()->setBold(true);
         $sh->getStyle("F{$firstData}:G$row")->getNumberFormat()->setFormatCode('#,##0');
         $this->box($sh, "A$hdr:H$row");
-        $sh->setCellValue('A' . ($row + 2), $this->docs->tpl($s['etat_footer'], $d));
+        $sh->setCellValue('A' . ($row + 2), $this->docs->etatFooter($d));
         $sh->getStyle('A' . ($row + 2))->getFont()->setItalic(true);
         $sh->getPageSetup()->setRowsToRepeatAtTopByStartAndEnd($hdr, $hdr);
         $this->setup($sh, false);

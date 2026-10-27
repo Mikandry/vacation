@@ -64,6 +64,52 @@ class DocumentService
         return $d;
     }
 
+
+    /** Hauteur estimée (points) d'une ligne du décompte : une ligne de plus quand le nom ou la localité passe à la ligne. */
+    private function decRowH($ag): float
+    {
+        $lines = max(1, (int) ceil(mb_strlen((string) $ag->name) / 26), (int) ceil(mb_strlen((string) $ag->locality) / 14));
+        return 18 + ($lines - 1) * 10;
+    }
+
+    /**
+     * Découpe les agents en pages du décompte : chaque page tient réellement sur UNE feuille A4,
+     * avec son propre « total de la page » et « total à reporter » en bas.
+     * La première page est plus courte (logo + en-tête). Retourne une liste de [offset, nombre].
+     * Réglage fin : Paramètres > « Marge de sécurité » (augmentez-la si une page déborde encore).
+     */
+    private function packDecompte($agents, array $s, int $perPage): array
+    {
+        $safety = max(0, (int) ($s['decompte_safety'] ?? 25));
+        $pageH = 842 - 33 - $safety;                       // A4 portrait moins les marges de @page
+        $logoH = (($s['show_logo'] ?? 'OUI') === 'OUI') ? 52 : 0;
+        $hdrLines = max(count(preg_split('/\R/', (string) $s['doc_header'])), 8);
+        $headH = $logoH + $hdrLines * 9.5 + 16;            // logo + bloc ministère de la 1re page
+        $theadH = 28;                                      // ligne de titres du tableau
+        $capFirst = max(60, $pageH - $headH - $theadH - 36);   // 36 = total de la page + total à reporter
+        $capNext = max(60, $pageH - $theadH - 54);             // 54 = report + total de la page + total à reporter
+        $footer = 90;                                      // phrase de fin + date + signature (dernière page)
+
+        $pages = []; $start = 0; $used = 0; $cnt = 0; $cap = $capFirst;
+        foreach ($agents->values() as $i => $ag) {
+            $h = $this->decRowH($ag);
+            if ($cnt > 0 && ($used + $h > $cap || $cnt >= $perPage)) {
+                $pages[] = [$start, $cnt];
+                $start = $i; $used = 0; $cnt = 0; $cap = $capNext;
+            }
+            $used += $h; $cnt++;
+        }
+        if ($cnt > 0) {
+            if ($cnt > 1 && $used + $footer > $cap) {      // le pied de page ne tient pas : au moins un agent reste avec lui
+                $pages[] = [$start, $cnt - 1];
+                $pages[] = [$start + $cnt - 1, 1];
+            } else {
+                $pages[] = [$start, $cnt];
+            }
+        }
+        return $pages ?: [[0, 0]];
+    }
+
     /** Découpe une liste d'agents en pages de la décision (première page : $firstSize lignes, puis 34). */
     private function chunk($agents, int $offset0, int $firstSize): array
     {
@@ -96,9 +142,8 @@ class DocumentService
         $perPage = max(5, (int) ($s['decompte_rows'] ?: 25));
         $dec = [];
         $cum = ['g' => 0, 'i' => 0, 'n' => 0];
-        for ($k = 0; $k === 0 || $k < $n; $k += $perPage) {
-            $part = $agents->slice($k, $perPage)->values();
-            $c = $part->count();
+        foreach ($this->packDecompte($agents, $s, $perPage) as [$k, $c]) {
+            $part = $agents->slice($k, $c)->values();
             $page = ['g' => $c * $gross, 'i' => $c * $irsaAmt, 'n' => $c * $net];
             $report = $cum;
             $cum = ['g' => $cum['g'] + $page['g'], 'i' => $cum['i'] + $page['i'], 'n' => $cum['n'] + $page['n']];
@@ -209,10 +254,23 @@ class DocumentService
         ]);
     }
 
+    /** N° de la décision : Laravel retire les espaces de début de champ ; on remet un blanc visible devant « -2026/MEN ». */
+    public function decisionNumber(array $d): string
+    {
+        $n = trim((string) $d['s']['decision_number']);
+        $nbsp = "\u{00A0}";
+        if ($n === '' || !ctype_digit(mb_substr($n, 0, 1))) $n = str_repeat($nbsp, 10) . $n;   // numéro à compléter à la main
+        return str_replace(' ', $nbsp, $n);
+    }
     public function decisionTitle(array $d): string
     {
-        return 'DECISION N° ' . $d['s']['decision_number'] . ' portant désignation des Agents Fonctionnaires pour les travaux de '
-            . $d['a']->title . '. SESSION ' . $d['s']['session'];
+        return 'DECISION N° ' . $this->decisionNumber($d) . ' portant désignation des Agents Fonctionnaires pour les travaux de '
+            . $d['a']->title . '.';
+    }
+    /** « SESSION 2026 » : ligne centrée sous le titre de la décision. */
+    public function decisionSession(array $d): string
+    {
+        return 'SESSION ' . $d['s']['session'];
     }
     public function article1(array $d): string
     {
@@ -221,7 +279,38 @@ class DocumentService
     }
     public function article2(array $d): string
     {
-        return 'Article 2 : Les Fonctionnaires désignés à l’article premier ci-dessus ont droit à l’indemnité de vacations prévue par ' . $d['s']['ref_arrete'] . '.';
+        return 'Les Fonctionnaires désignés à l’article premier ci-dessus ont droit à l’indemnité de vacations prévue par ' . $d['s']['ref_arrete'] . '.';
+    }
+
+    /**
+     * Articles qui suivent l'article premier, numérotés automatiquement (2, 3, 4…) :
+     *  - l'article « indemnité de vacations » + ligne budgétaire (désactivable : Paramètres > Articles de la décision) ;
+     *  - les articles supplémentaires (un par ligne dans les paramètres) ;
+     *  - l'article final (enregistrement / communication).
+     * Retourne [['label' => 'Article 2', 'text' => '…', 'budget' => bool], …].
+     */
+    public function articles(array $d): array
+    {
+        $s = $d['s'];
+        $items = [];
+        if (($s['decision_art_indemnite'] ?? 'OUI') === 'OUI') $items[] = ['text' => $this->article2($d), 'budget' => true];
+        foreach (preg_split('/\R/', (string) ($s['decision_articles_extra'] ?? '')) as $line) {
+            $line = trim($line);
+            if ($line !== '') $items[] = ['text' => $this->tpl($line, $d), 'budget' => false];
+        }
+        $final = trim((string) ($s['decision_art_final'] ?? 'La présente décision sera enregistrée et communiquée partout où besoin sera.'));
+        if ($final !== '') $items[] = ['text' => $this->tpl($final, $d), 'budget' => false];
+        foreach ($items as $i => &$it) $it['label'] = 'Article ' . ($i + 2);
+        unset($it);
+        return $items;
+    }
+
+    /** Phrase de fin de l'état de vacations : la somme en lettres est le NET (IRSA déduit). */
+    public function etatFooter(array $d): string
+    {
+        $d['totalWords'] = $d['totalNetWords'];
+        $d['totalMoney'] = $d['totalNet'];
+        return $this->tpl($d['s']['etat_footer'], $d);
     }
     public function signDate(array $d): string
     {

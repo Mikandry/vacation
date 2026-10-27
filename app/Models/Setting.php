@@ -20,6 +20,10 @@ class Setting extends Model
         'authority' => "LE MINISTRE DE L’EDUCATION NATIONALE,",
         'signatory' => "Le Ministre de l’Education Nationale",
         'ref_arrete' => "l’Arrêté Interministériel N°16166/2025 du 19 juin 2025",
+        // articles de la décision (numérotation automatique après l'article premier)
+        'decision_art_indemnite' => 'OUI',
+        'decision_articles_extra' => '',
+        'decision_art_final' => 'La présente décision sera enregistrée et communiquée partout où besoin sera.',
         'budget_mission' => '812',
         'budget_indicator' => '314',
         'budget_section' => '00.81.0. E43.00000',
@@ -69,6 +73,7 @@ class Setting extends Model
         'decompte_line1' => 'Activité : {activite} — Session {session}',
         'decompte_line2' => '{jours} jour(s) × {taux} Ar/jour — IRSA {irsa} %',
         'decompte_rows' => '25',
+        'decompte_safety' => '25',
         'decompte_footer' => 'Arrêté le présent état de décompte à la somme nette de {net_lettres} ARIARY.',
 
         'services' => "SDC/DEXAMC|Service des Diplômes et de la Certification\nBAG/DEXAMC|Bureau des Affaires Générales\nSEE/DEXAMC|Service de l’Evaluation des Epreuves\nSOE/DEXAMC|Service de l’Organisation des Examens",

@@ -17,7 +17,7 @@
 
 <div class="card card-body mb-2 py-2">
  <div class="row g-2 align-items-center">
-  @if($type === 'decompte')
+  @if(in_array($type, ['decompte','etat']))
   <div class="col-auto">
    <div class="input-group input-group-sm"><span class="input-group-text">Taux IRSA (%)</span>
     <input id="irsa" type="number" step="0.1" min="0" max="100" class="form-control" value="{{ $irsa }}" style="max-width:90px">

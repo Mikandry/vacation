@@ -28,21 +28,40 @@ table.t th{text-align:center} thead{display:table-header-group} tr{page-break-in
   <div class="c" style="margin-top:3px"><b>SESSION {{ $s['session'] }}</b></div>
  </td></tr></table>
 <p class="j" style="margin-top:14px;line-height:1.6;text-indent:28px">{{ $docs->tpl($s['note_intro'], get_defined_vars()) }}</p>
-<table class="t"><thead><tr><th width="6%">N°</th><th width="51%">NOM ET PRENOMS</th><th width="14%">IM</th><th width="29%">LOCALITE</th></tr></thead>
-@if($quarantine)
-@php $num_i = 0; @endphp
-@foreach($groups as $g)
-<tr><td colspan="4" style="background:#eee;font-weight:bold">{{ mb_strtoupper($g['label']) }}</td></tr>
-@foreach($g['rows'] as $ag)@php $num_i++; @endphp<tr><td style="text-align:right">{{ $num_i }}</td><td>{{ $ag->name }}</td><td class="c">{{ $ag->im }}</td><td class="c">{{ $ag->locality }}</td></tr>@endforeach
-<tr><td colspan="4" style="font-weight:bold;font-style:italic">{{ $docs->groupTail($g) }}</td></tr>
-@endforeach
-@else
-@foreach($agents as $i=>$ag)<tr><td style="text-align:right">{{ $i+1 }}</td><td>{{ $ag->name }}</td><td class="c">{{ $ag->im }}</td><td class="c">{{ $ag->locality }}</td></tr>@endforeach
-@endif
+@php
+ // lignes du tableau : h = titre de sous-groupe, a = agent, f = arrêtage de sous-groupe
+ $nrows = [];
+ if ($quarantine) {
+   $ni = 0;
+   foreach ($groups as $g) {
+     $nrows[] = ['h', mb_strtoupper($g['label'])];
+     foreach ($g['rows'] as $ag) { $ni++; $nrows[] = ['a', $ni, $ag]; }
+     $nrows[] = ['f', $docs->groupTail($g)];
+   }
+ } else {
+   foreach ($agents as $i => $ag) $nrows[] = ['a', $i + 1, $ag];
+ }
+ // les 2 dernières lignes restent avec l'arrêtage, la date et la signature
+ $keep = min(2, count($nrows));
+ $mainRows = array_slice($nrows, 0, count($nrows) - $keep);
+ $tailRows = array_slice($nrows, count($nrows) - $keep);
+ $theadHtml = '<thead><tr><th width="6%">N°</th><th width="51%">NOM ET PRENOMS</th><th width="14%">IM</th><th width="29%">LOCALITE</th></tr></thead>';
+ // ligne invisible (hauteur 0) qui impose les mêmes largeurs de colonnes que le tableau du haut
+ $spacer = '<tr><td width="6%" style="border:0;padding:0;height:0;font-size:0;line-height:0"></td><td width="51%" style="border:0;padding:0;height:0;font-size:0;line-height:0"></td><td width="14%" style="border:0;padding:0;height:0;font-size:0;line-height:0"></td><td width="29%" style="border:0;padding:0;height:0;font-size:0;line-height:0"></td></tr>';
+@endphp
+@if(count($mainRows))
+<table class="t">{!! $theadHtml !!}
+@include('docs.parts.noterows', ['rows' => $mainRows])
 </table>
-<div style="page-break-inside:avoid">
-<p class="j" style="margin-top:14px;line-height:1.6">{{ $docs->tpl($s['note_closing'], get_defined_vars()) }}</p>
+@endif
+<table class="t" style="{{ count($mainRows) ? 'margin-top:-1px;' : '' }}page-break-inside:avoid">
+@if(!count($mainRows)){!! $theadHtml !!}@endif
+{!! $spacer !!}
+@include('docs.parts.noterows', ['rows' => $tailRows])
+<tr><td colspan="4" style="border:0;padding:0">
+<p class="j" style="margin:14px 0 0;line-height:1.6">{{ $docs->tpl($s['note_closing'], get_defined_vars()) }}</p>
 <p style="margin:0 0 0 50%;line-height:1.6;text-indent:28px">{{ $docs->tpl($s['note_place_date'], get_defined_vars()) }}</p>
 @foreach($sign as $l)<p class="sig" style="margin-top:0;margin-bottom:0;line-height:1.6">{{ $l }}</p>@endforeach
-</div>
+</td></tr>
+</table>
 </body></html>
