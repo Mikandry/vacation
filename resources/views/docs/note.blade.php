@@ -41,11 +41,13 @@ table.t th{text-align:center} thead{display:table-header-group} tr{page-break-in
  } else {
    foreach ($agents as $i => $ag) $nrows[] = ['a', $i + 1, $ag];
  }
- // les 2 dernières lignes restent avec l'arrêtage, la date et la signature
+ // les 2 dernières lignes restent TOUJOURS avec l'arrêtage, la date et la signature (jamais l'arrêtage seul sur une page)
  $keep = min(2, count($nrows));
  $mainRows = array_slice($nrows, 0, count($nrows) - $keep);
  $tailRows = array_slice($nrows, count($nrows) - $keep);
  $theadHtml = '<thead><tr><th width="6%">N°</th><th width="51%">NOM ET PRENOMS</th><th width="14%">IM</th><th width="29%">LOCALITE</th></tr></thead>';
+@endphp
+@php
  // ligne invisible (hauteur 0) qui impose les mêmes largeurs de colonnes que le tableau du haut
  $spacer = '<tr><td width="6%" style="border:0;padding:0;height:0;font-size:0;line-height:0"></td><td width="51%" style="border:0;padding:0;height:0;font-size:0;line-height:0"></td><td width="14%" style="border:0;padding:0;height:0;font-size:0;line-height:0"></td><td width="29%" style="border:0;padding:0;height:0;font-size:0;line-height:0"></td></tr>';
 @endphp

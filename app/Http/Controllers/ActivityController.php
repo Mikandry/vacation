@@ -21,6 +21,7 @@ class ActivityController extends Controller
             'note_number' => 'nullable|string|max:120',
             'position' => 'nullable|integer|min:0',
             'active' => 'nullable|boolean',
+            'group_type' => 'nullable|in:NONE,QUARANTAINE,DISPATCHING,CORRECTION',
             'sub' => 'nullable|array',
             'sub.*' => 'nullable|integer|min:0',
         ];
@@ -67,12 +68,13 @@ class ActivityController extends Controller
         $d['decree_total'] = $d['decree_total'] ?? 0;
         $d['position'] = $d['position'] ?? 0;
 
-        // ---- quarantaine : répartition en sous-groupes (OG, Superviseur, Coordonateur, Sous pli)
-        $probe = new Activity(['code' => $d['code'], 'name' => $d['name']]);
+        // ---- sous-groupes (quarantaine, dispatching, correction) : effectifs prévus, 0 = pas de limite
+        $d['group_type'] = $d['group_type'] ?: null;
+        $probe = new Activity(['code' => $d['code'], 'name' => $d['name'], 'group_type' => $d['group_type']]);
         $d['subgroups'] = null;
-        if ($probe->is_quarantine) {
+        if ($probe->has_subgroups) {
             $sub = [];
-            foreach (array_keys(Activity::SUBGROUPS) as $k) $sub[$k] = (int) ($d['sub'][$k] ?? 0);
+            foreach (array_keys($probe->subgroup_defs) as $k) $sub[$k] = (int) ($d['sub'][$k] ?? 0);
             $cap = (int) ($d['decree_total'] > 0 ? $d['decree_total'] : $d['quota']);
             $sum = array_sum($sub);
             if ($sum > $cap) {

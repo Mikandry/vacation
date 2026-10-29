@@ -38,7 +38,7 @@
   </tr>
   @endforeach
  </table>
- @if($loop->last)<p style="margin-top:10px">{{ $s['place'] }}, le {{ $s['decision_date'] }}</p>@endif
+ @if($loop->last)<p style="margin-top:10px;text-align:right;padding-right:20px">{{ $s['place'] }}, le {{ $s['decision_date'] ?: '……………………' }}</p>@endif
  @if(!$loop->last)<div style="page-break-after:always"></div>@endif
 @endforeach
 

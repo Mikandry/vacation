@@ -24,50 +24,36 @@ table.t th{text-align:center} .c{text-align:center} .tail{font-weight:bold;font-
 @php
  $thead = '<thead><tr><th width="11%">N° d’ordre</th><th width="7%">n°</th><th>NOM ET PRENOMS</th><th width="13%">IM</th><th width="22%">LOCALITE DE SERVICE</th></tr></thead>';
  $spacer = '<tr><td width="11%" style="border:0;padding:0;height:0;font-size:0;line-height:0"></td><td width="7%" style="border:0;padding:0;height:0;font-size:0;line-height:0"></td><td style="border:0;padding:0;height:0;font-size:0;line-height:0"></td><td width="13%" style="border:0;padding:0;height:0;font-size:0;line-height:0"></td><td width="22%" style="border:0;padding:0;height:0;font-size:0;line-height:0"></td></tr>';
- // une « unité » = une page de noms (avec, si quarantaine, le titre du sous-groupe au début de celui-ci)
- $units = [];
- if ($quarantine) {
-   foreach ($groups as $g) {
-     $cnt = count($g['chunks']);
-     foreach ($g['chunks'] as $ci => $ch) {
-       $isLastCh = $ci === $cnt - 1;
-       $units[] = ['head' => $ci === 0 ? mb_strtoupper($g['label']) : null, 'ch' => $ch, 'local' => true,
-                   'tail' => $isLastCh ? $docs->groupTail($g) : $docs->pageTail($ch), 'brk' => !$isLastCh];
-     }
-   }
- } else {
-   $cnt = count($chunks);
-   foreach ($chunks as $ci => $ch) $units[] = ['head' => null, 'ch' => $ch, 'local' => false, 'tail' => $docs->pageTail($ch), 'brk' => $ci < $cnt - 1];
- }
- $lastU = count($units) - 1;
 @endphp
-@foreach($units as $ui => $u)
+@foreach($dpages as $pIdx => $pg)
+@foreach($pg['runs'] as $run)
 @php
- $ch = $u['ch']; $isFinal = $ui === $lastU;
- $rows = $ch['rows']->values();
- $keep = $isFinal ? min(2, $rows->count()) : 0;     // les 2 derniers noms restent avec l'arrêtage, les articles et la signature
- $main = $rows->slice(0, $rows->count() - $keep)->values();
- $kept = $rows->slice($rows->count() - $keep)->values();
+ $items = collect($run['items'])->values();
+ $isFinal = $run['final'];
+ $keep = $isFinal ? min($run['keep'], $items->count()) : 0;      // les derniers noms restent avec l'arrêtage, les articles et la signature
+ $main = $items->slice(0, $items->count() - $keep)->values();
+ $kept = $items->slice($items->count() - $keep)->values();
 @endphp
-@if($u['head'])<p style="margin:8px 0 2px"><b>{{ $u['head'] }}</b></p>@endif
+@if($run['label'])<p style="margin:8px 0 2px"><b>{{ mb_strtoupper($run['label']) }}</b></p>@endif
 @if(!$isFinal)
 <table class="t">{!! $thead !!}
-@include('docs.parts.decrows', ['rows' => $rows, 'ch' => $ch, 'local' => $u['local'], 'from' => 0])
+@include('docs.parts.decrows', ['rows' => $items, 'quar' => $quarantine, 'from' => 0])
 </table>
-<p class="tail">{{ $u['tail'] }}</p>
-@if($u['brk'])<div style="page-break-after:always"></div>@endif
+<p class="tail">{{ $run['tail'] }}</p>
+@if($run['tail2'])<p class="tail">{{ $run['tail2'] }}</p>@endif
 @else
 @if($main->count())
 <table class="t">{!! $thead !!}
-@include('docs.parts.decrows', ['rows' => $main, 'ch' => $ch, 'local' => $u['local'], 'from' => 0])
+@include('docs.parts.decrows', ['rows' => $main, 'quar' => $quarantine, 'from' => 0])
 </table>
 @endif
 <table class="t" style="{{ $main->count() ? 'margin-top:-1px;' : '' }}page-break-inside:avoid">
 @if(!$main->count()){!! $thead !!}@endif
 {!! $spacer !!}
-@include('docs.parts.decrows', ['rows' => $kept, 'ch' => $ch, 'local' => $u['local'], 'from' => $main->count()])
+@include('docs.parts.decrows', ['rows' => $kept, 'quar' => $quarantine, 'from' => $main->count()])
 <tr><td colspan="5" style="border:0;padding:0;font-size:9pt">
-<p class="tail">{{ $u['tail'] }}</p>
+<p class="tail">{{ $run['tail'] }}</p>
+@if($run['tail2'])<p class="tail">{{ $run['tail2'] }}</p>@endif
 <p style="margin-top:8px"><b>ARRETEE LA PRESENTE DECISION AU NOMBRE DE {{ $nWords }} ({{ $n }}) AGENTS.</b></p>
 @foreach($docs->articles(get_defined_vars()) as $art)
 <p class="j" style="margin-top:6px">{{ $art['label'] }} : {{ $art['text'] }}</p>
@@ -82,5 +68,7 @@ table.t th{text-align:center} .c{text-align:center} .tail{font-weight:bold;font-
 </td></tr>
 </table>
 @endif
+@endforeach
+@if(!$loop->last)<div style="page-break-after:always"></div>@endif
 @endforeach
 </body></html>

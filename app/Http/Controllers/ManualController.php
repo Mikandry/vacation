@@ -101,11 +101,11 @@ class ManualController extends Controller
         $subs = [];
         if ($activity->is_quarantine) {
             foreach ((array) $r->input('sub', []) as $agentId => $key) {
-                if ($selected->contains((int) $agentId) && isset(Activity::SUBGROUPS[$key])) $subs[(int) $agentId] = $key;
+                if ($selected->contains((int) $agentId) && isset($activity->subgroup_defs[$key])) $subs[(int) $agentId] = $key;
             }
             $planned = $activity->subgroup_counts;
             $count = array_count_values($subs);
-            foreach (Activity::SUBGROUPS as $k => $label) {
+            foreach ($activity->subgroup_defs as $k => $label) {
                 if (array_sum($planned) > 0 && ($count[$k] ?? 0) > $planned[$k]) {
                     throw ValidationException::withMessages(['sub' => "Sous-groupe « $label » : " . ($count[$k] ?? 0) . " agents choisis pour $planned[$k] prévus."]);
                 }

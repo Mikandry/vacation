@@ -4,32 +4,60 @@ use Illuminate\Database\Eloquent\Model;
 
 class Activity extends Model
 {
-    protected $fillable = ['code', 'name', 'title', 'days', 'rate', 'quota', 'decree_total', 'start_date', 'position', 'active', 'manual', 'note_number', 'subgroups'];
+    protected $fillable = ['code', 'name', 'title', 'days', 'rate', 'quota', 'decree_total', 'start_date', 'position', 'active', 'manual', 'note_number', 'subgroups', 'group_type'];
 protected $casts = ['start_date' => 'date', 'active' => 'boolean', 'manual' => 'boolean', 'subgroups' => 'array'];
 
     public function getAmountAttribute(): int { return (int)$this->days * (int)$this->rate; }
 
-    /** Sous-groupes de la quarantaine, dans l'ordre d'impression. */
-    public const SUBGROUPS = [
-        'OG' => 'Organisation générale',
-        'SUP' => 'Superviseur',
-        'COORD' => 'Coordonateur',
-        'SP' => 'Sous pli',
+    /** Types d'activité découpés en sous-groupes : clé => [clé du sous-groupe => libellé], dans l'ordre d'impression. */
+    public const KINDS = [
+        'QUARANTAINE' => ['OG' => 'Organisation générale', 'SUP' => 'Superviseur', 'COORD' => 'Coordonateur', 'SP' => 'Sous pli'],
+        'DISPATCHING' => ['DISP' => 'Agent de dispatching', 'SECU' => 'Agent de sécurité'],
+        'CORRECTION' => ['CORR' => 'Correcteur', 'SECR' => 'Agent de secrétariat'],
+    ];
+    public const KIND_LABELS = [
+        'QUARANTAINE' => 'Quarantaine (OG, Superviseur, Coordonateur, Sous pli)',
+        'DISPATCHING' => 'Dispatching (Agent de dispatching, Agent de sécurité)',
+        'CORRECTION' => 'Correction (Correcteur, Agent de secrétariat)',
     ];
 
-    /** Vrai si l'activité est la quarantaine (détectée sur le code ou le nom). */
-    public function getIsQuarantineAttribute(): bool
+    /** Type de sous-groupes de l'activité (choisi dans le formulaire, sinon deviné d'après le nom), ou null. */
+    public function getGroupKindAttribute(): ?string
     {
-        $t = \Illuminate\Support\Str::lower(\Illuminate\Support\Str::ascii($this->code . ' ' . $this->name));
-        return str_contains($t, 'quarantaine');
+        $gt = (string) ($this->group_type ?? '');
+        if ($gt === 'NONE') return null;
+        if (isset(self::KINDS[$gt])) return $gt;
+        $name = \Illuminate\Support\Str::lower(\Illuminate\Support\Str::ascii(trim((string) $this->name)));
+        $code = \Illuminate\Support\Str::lower(\Illuminate\Support\Str::ascii(trim((string) $this->code)));
+        if (str_contains($name . ' ' . $code, 'quarantaine')) return 'QUARANTAINE';
+        if (str_contains($name . ' ' . $code, 'dispatching')) return 'DISPATCHING';
+        if (str_starts_with($name, 'correction') || str_starts_with($code, 'correction')) return 'CORRECTION';
+        return null;
     }
 
-    /** Effectif prévu par sous-groupe : ['OG'=>n, 'SUP'=>n, 'COORD'=>n, 'SP'=>n]. */
+    /** Sous-groupes de cette activité : [clé => libellé], vide si l'activité n'est pas découpée. */
+    public function getSubgroupDefsAttribute(): array
+    {
+        return self::KINDS[$this->group_kind] ?? [];
+    }
+
+    public function getHasSubgroupsAttribute(): bool
+    {
+        return count($this->subgroup_defs) > 0;
+    }
+
+    /** Ancien nom, conservé : vrai si l'activité est découpée en sous-groupes. */
+    public function getIsQuarantineAttribute(): bool
+    {
+        return $this->has_subgroups;
+    }
+
+    /** Effectif prévu par sous-groupe (0 = pas de limite) : ['OG' => n, …]. */
     public function getSubgroupCountsAttribute(): array
     {
         $raw = (array) ($this->subgroups ?? []);
         $out = [];
-        foreach (array_keys(self::SUBGROUPS) as $k) $out[$k] = max(0, (int) ($raw[$k] ?? 0));
+        foreach (array_keys($this->subgroup_defs) as $k) $out[$k] = max(0, (int) ($raw[$k] ?? 0));
         return $out;
     }
 

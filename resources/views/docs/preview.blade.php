@@ -60,6 +60,7 @@ function opts(){
 function refresh(){
  const p = opts();
  p.set('inline', 1);
+ p.set('_', Date.now());   // évite que le navigateur réaffiche un ancien PDF
  document.getElementById('pv').src = base.pdf + '?' + p.toString();
  const q = opts().toString();
  document.querySelectorAll('.dl').forEach(a => {

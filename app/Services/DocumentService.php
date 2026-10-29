@@ -29,13 +29,14 @@ class DocumentService
             $d = $this->build($activity, $all->sortBy($byName)->values(), $opt, null);
             $d['quarantine'] = false;
             $d['groups'] = [];
+            $d['dpages'] = $this->decisionPages([['label' => null, 'rows' => $d['agents'], 'g' => null]], $d['s'], false);
             $d['parts'] = [$d];
             return $d;
         }
 
         // ---- quarantaine : OG, Superviseur, Coordonateur, Sous pli (+ « Non réparti » s'il reste des agents sans sous-groupe)
         $map = AgentSubgroup::where('activity_id', $activity->id)->pluck('subgroup', 'agent_id');
-        $labels = Activity::SUBGROUPS + ['NR' => 'Non réparti'];
+        $labels = $activity->subgroup_defs + ['NR' => 'Non réparti'];
         $buckets = array_fill_keys(array_keys($labels), []);
         foreach ($all as $ag) {
             $k = $map[$ag->id] ?? 'NR';
@@ -60,16 +61,139 @@ class DocumentService
         $d = $this->build($activity, $ordered->values(), $opt, null);
         $d['quarantine'] = true;
         $d['groups'] = $groups;
+        $d['dpages'] = $this->decisionPages(array_map(fn($g) => ['label' => $g['label'], 'rows' => $g['rows'], 'g' => $g], $groups), $d['s'], true);
         $d['parts'] = $parts ?: [$d];
         return $d;
     }
 
 
+
+    /** Hauteur estimée (points) d'une ligne de la liste des noms de la décision. */
+    private function nameRowH($ag): float
+    {
+        $lines = max(1, (int) ceil(mb_strlen((string) $ag->name) / 44), (int) ceil(mb_strlen((string) $ag->locality) / 19));
+        return 18.5 + ($lines - 1) * 10.5;
+    }
+
+    /**
+     * Répartit les noms de la décision en pages qui se remplissent vraiment : plus de page vide ni à moitié vide.
+     * Chaque page garde son « arrêtée la présente page » ; la dernière page garde au moins 2 noms avec l'arrêtage
+     * général, les articles, le tableau budgétaire et la signature.
+     * $sections : [['label' => ?string, 'rows' => Collection, 'g' => ?array], …]
+     * Retourne [['runs' => [['label','items','final','keep','tail','sec','secEnd']]], …]
+     * avec item = ['ag' => agent, 'g' => n° d'ordre, 'l' => n° dans le sous-groupe].
+     * Réglage : Paramètres > « Marge de sécurité de la page » (la même que pour le décompte).
+     */
+    private function decisionPages(array $sections, array $s, bool $quarantine): array
+    {
+        $safety = max(0, (int) ($s['decompte_safety'] ?? 25));
+        $pageH = 842 - 33 - $safety;
+        $capFirst = $pageH - 70;                 // « DECIDE » + article premier occupent le haut de la 1re page de noms
+        $theadH = 30; $headH = 26; $tailH = 26;
+
+        // hauteur estimée du bloc final : arrêtage + articles + budget + date + signature
+        $finalH = $tailH + 24 + 42 + 20;
+        if (($s['decision_art_indemnite'] ?? 'OUI') === 'OUI') $finalH += 34 + 16 + 44;
+        foreach (preg_split('/\R/', (string) ($s['decision_articles_extra'] ?? '')) as $ln) {
+            if (trim($ln) !== '') $finalH += 8 + 11 * (int) ceil(mb_strlen(trim($ln)) / 95);
+        }
+        if (trim((string) ($s['decision_art_final'] ?? 'x')) !== '') $finalH += 24;
+
+        $newPage = fn(int $cap) => ['runs' => [], 'used' => 0, 'cap' => $cap];
+        $newRun = fn($label, $items, $final, $keep, $si) => ['label' => $label, 'items' => $items, 'final' => $final, 'keep' => $keep, 'secEnd' => false, 'sec' => $si, 'tail' => '', 'tail2' => ''];
+        $pages = [$newPage($capFirst)];
+        $pi = 0; $g = 0;
+
+        $nonEmpty = array_keys(array_filter($sections, fn($x) => $x['rows']->count() > 0));
+        $lastSec = $nonEmpty ? end($nonEmpty) : null;
+
+        foreach ($sections as $si => $sec) {
+            $rows = $sec['rows']->values();
+            $n = $rows->count();
+            if ($n === 0) continue;
+            $keepN = ($si === $lastSec) ? min(2, $n) : 0;
+            $bodyN = $n - $keepN;
+            $item = fn($i) => ['ag' => $rows[$i], 'g' => $g + $i + 1, 'l' => $i + 1];
+            $open = false; $ri = -1; $i = 0;
+
+            while ($i < $bodyN) {
+                $h = $this->nameRowH($rows[$i]);
+                if (!$open) {
+                    $hh = ($i === 0 && $sec['label']) ? $headH : 0;
+                    if ($pages[$pi]['used'] > 0 && $pages[$pi]['used'] + $hh + $theadH + $h + $tailH > $pages[$pi]['cap']) {
+                        $pages[] = $newPage($pageH); $pi++;
+                    }
+                    $pages[$pi]['runs'][] = $newRun($i === 0 ? $sec['label'] : null, [], false, 0, $si);
+                    $ri = count($pages[$pi]['runs']) - 1;
+                    $pages[$pi]['used'] += $hh + $theadH + $tailH;     // place de l'arrêtage de fin de page réservée
+                    if (count($pages[$pi]['runs']) > 1) $pages[$pi]['used'] += 20;   // + une ligne « arrêtée la présente page »
+                    $open = true;
+                }
+                if ($pages[$pi]['used'] + $h > $pages[$pi]['cap'] && count($pages[$pi]['runs'][$ri]['items']) > 0) {
+                    $pages[] = $newPage($pageH); $pi++; $open = false;    // page pleine : la suite passe à la page suivante
+                    continue;
+                }
+                $pages[$pi]['runs'][$ri]['items'][] = $item($i);
+                $pages[$pi]['used'] += $h;
+                $i++;
+            }
+
+            if ($keepN > 0) {
+                $keepItems = []; $sumKeep = 0;
+                for ($j = $bodyN; $j < $n; $j++) { $keepItems[] = $item($j); $sumKeep += $this->nameRowH($rows[$j]); }
+                if ($open && $pages[$pi]['used'] - $tailH + $sumKeep + $finalH <= $pages[$pi]['cap']) {
+                    // les derniers noms et le bloc final tiennent à la suite des autres noms de la page
+                    foreach ($keepItems as $it) $pages[$pi]['runs'][$ri]['items'][] = $it;
+                    $pages[$pi]['used'] += -$tailH + $sumKeep + $finalH;
+                } else {
+                    // sinon, les 2 derniers noms passent sur une nouvelle page avec le bloc final
+                    $hh = ($bodyN === 0 && $sec['label']) ? $headH : 0;
+                    $need = $hh + $theadH + $sumKeep + $finalH;
+                    if ($open || ($pages[$pi]['used'] > 0 && $pages[$pi]['used'] + $need > $pages[$pi]['cap'])) {
+                        $pages[] = $newPage($pageH); $pi++;
+                    }
+                    $pages[$pi]['runs'][] = $newRun($bodyN === 0 ? $sec['label'] : null, $keepItems, true, $keepN, $si);
+                    $pages[$pi]['used'] += $need;
+                    $ri = count($pages[$pi]['runs']) - 1;
+                }
+                $pages[$pi]['runs'][$ri]['final'] = true;
+                $pages[$pi]['runs'][$ri]['keep'] = $keepN;
+            } elseif ($open) {
+                $pages[$pi]['runs'][$ri]['secEnd'] = true;           // fin du sous-groupe
+            }
+            $g += $n;
+        }
+
+        if (!$pages[0]['runs']) {                                      // aucun agent
+            return [['runs' => [$newRun(null, [], true, 0, 0)]]];
+        }
+
+        // textes d'arrêtage : fin de sous-groupe, ou fin de page quand le sous-groupe continue sur la page suivante
+        foreach ($pages as $pIdx => $pg) {
+            $c = 0;
+            foreach ($pg['runs'] as $run) $c += count($run['items']);
+            $pageTail = $this->pageTail(['rows' => collect(array_fill(0, $c, 1)), 'words' => Words::of($c)]);
+            foreach ($pg['runs'] as $rIdx => $run) {
+                $g2 = $sections[$run['sec']]['g'] ?? null;
+                if ($run['final']) $tail = ($quarantine && $g2) ? $this->groupTail($g2) : $pageTail;
+                elseif ($run['secEnd'] && $g2) $tail = $this->groupTail($g2);
+                else $tail = $pageTail;
+                $pages[$pIdx]['runs'][$rIdx]['tail'] = $tail;
+                // un arrêtage de page par page, même quand la page contient plusieurs sous-groupes
+                if ($rIdx === count($pg['runs']) - 1 && $tail !== $pageTail && $c !== count($run['items'])) {
+                    $pages[$pIdx]['runs'][$rIdx]['tail2'] = $pageTail;
+                }
+            }
+            unset($pages[$pIdx]['used'], $pages[$pIdx]['cap']);
+        }
+        return $pages;
+    }
+
     /** Hauteur estimée (points) d'une ligne du décompte : une ligne de plus quand le nom ou la localité passe à la ligne. */
     private function decRowH($ag): float
     {
         $lines = max(1, (int) ceil(mb_strlen((string) $ag->name) / 26), (int) ceil(mb_strlen((string) $ag->locality) / 14));
-        return 18 + ($lines - 1) * 10;
+        return 20 + ($lines - 1) * 10.5;
     }
 
     /**
@@ -85,7 +209,7 @@ class DocumentService
         $logoH = (($s['show_logo'] ?? 'OUI') === 'OUI') ? 52 : 0;
         $hdrLines = max(count(preg_split('/\R/', (string) $s['doc_header'])), 8);
         $headH = $logoH + $hdrLines * 9.5 + 16;            // logo + bloc ministère de la 1re page
-        $theadH = 28;                                      // ligne de titres du tableau
+        $theadH = 32;                                      // ligne de titres du tableau
         $capFirst = max(60, $pageH - $headH - $theadH - 36);   // 36 = total de la page + total à reporter
         $capNext = max(60, $pageH - $theadH - 54);             // 54 = report + total de la page + total à reporter
         $footer = 90;                                      // phrase de fin + date + signature (dernière page)

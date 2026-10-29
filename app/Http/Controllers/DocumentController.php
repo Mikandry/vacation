@@ -52,6 +52,7 @@ class DocumentController extends Controller
         $pdf = Pdf::loadView("docs.$type", $d)
             ->setPaper('a4', $type === 'presence' ? 'landscape' : 'portrait');
         $name = "{$type}-{$d['file']}.pdf";
-        return $r->boolean('inline') ? $pdf->stream($name) : $pdf->download($name);
+        $resp = $r->boolean('inline') ? $pdf->stream($name) : $pdf->download($name);
+        return $resp->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')->header('Pragma', 'no-cache');
     }
 }

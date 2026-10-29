@@ -39,12 +39,12 @@
 
 @if($act->is_quarantine)
 <div class="card card-body mb-3">
- <div class="fw-bold mb-1">Sous-groupes de la quarantaine</div>
- <div class="small text-muted mb-2">Cochez les agents, puis choisissez leur sous-groupe. Les effectifs prévus se règlent dans « Modifier » l’activité ; le total ne peut pas dépasser {{ $act->agent_cap }} agents.</div>
+ <div class="fw-bold mb-1">Sous-groupes : {{ implode(' / ', $act->subgroup_defs) }}</div>
+ <div class="small text-muted mb-2">Cochez les agents, puis choisissez le rôle (sous-groupe) de chacun. Les effectifs prévus se règlent dans « Modifier » l’activité (0 = pas de limite){{ $act->agent_cap > 0 ? ' ; le total ne peut pas dépasser '.$act->agent_cap.' agents' : '' }}.</div>
  @error('sub')<div class="alert alert-danger py-1 small">{{ $message }}</div>@enderror
  <div class="row g-2">
-  @foreach(\App\Models\Activity::SUBGROUPS as $k=>$lb)
-  <div class="col-6 col-md-3"><div class="kpi"><div class="l">{{ $lb }}</div><div class="v"><span id="sg-{{ $k }}">0</span> / {{ $act->subgroup_counts[$k] }}</div></div></div>
+  @foreach($act->subgroup_defs as $k=>$lb)
+  <div class="col-6 col-md-3"><div class="kpi"><div class="l">{{ $lb }}</div><div class="v"><span id="sg-{{ $k }}">0</span>{{ $act->subgroup_counts[$k] > 0 ? ' / '.$act->subgroup_counts[$k] : '' }}</div></div></div>
   @endforeach
  </div>
  <div class="small mt-1" id="sg-warn"></div>
@@ -91,7 +91,7 @@
    <td>{{ $ag->im }}</td>
    <td>{{ $ag->locality }}</td>
    <td><span class="badge text-bg-{{ $ag->type=='DIRECTION'?'primary':'info' }}">{{ $ag->type }}</span></td>
-   @if($act->is_quarantine)<td><select name="sub[{{ $ag->id }}]" class="form-select form-select-sm sg"><option value="">—</option>@foreach(\App\Models\Activity::SUBGROUPS as $k=>$lb)<option value="{{ $k }}" @selected(($subMap[$ag->id] ?? null)===$k)>{{ $lb }}</option>@endforeach</select></td>@endif
+   @if($act->is_quarantine)<td><select name="sub[{{ $ag->id }}]" class="form-select form-select-sm sg"><option value="">—</option>@foreach($act->subgroup_defs as $k=>$lb)<option value="{{ $k }}" @selected(($subMap[$ag->id] ?? null)===$k)>{{ $lb }}</option>@endforeach</select></td>@endif
    <td class="small">{{ $ag->function }}</td>
    <td class="small">{{ $info[$ag->id]['codes'] }}</td>
    <td class="small text-danger fw-bold">{{ $info[$ag->id]['conflict'] }}</td>
@@ -159,7 +159,7 @@ recount();
 @if($act->is_quarantine)
 const PLAN={!! json_encode($act->subgroup_counts) !!}, CAP={{ $act->agent_cap }};
 function recountSg(){
- const c={OG:0,SUP:0,COORD:0,SP:0}; let none=0;
+ const c={}; Object.keys(PLAN).forEach(k=>c[k]=0); let none=0;
  rows.forEach(r=>{
   const cb=r.querySelector('.cb'), sel=r.querySelector('.sg');
   sel.disabled=!cb.checked;

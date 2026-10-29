@@ -123,34 +123,29 @@ class DocumentExporter
         $sec->addPageBreak();
         $sec->addText('DECIDE :', ['bold' => true]);
         $sec->addText($this->docs->article1($d), [], ['alignment' => 'both']);
-                $blocks = $d['quarantine']
-            ? array_map(fn($g) => ['head' => mb_strtoupper($g['label']), 'chunks' => $g['chunks'], 'g' => $g], $d['groups'])
-            : [['head' => null, 'chunks' => $d['chunks'], 'g' => null]];
-        $lastBlock = count($blocks) - 1;
-        foreach ($blocks as $bi => $bk) {
-            if ($bk['head']) $sec->addText($bk['head'], ['bold' => true], ['spaceBefore' => 120]);
-            $last = count($bk['chunks']) - 1;
-            foreach ($bk['chunks'] as $i => $ch) {
-                $isFinal = ($bi === $lastBlock && $i === $last);   // dernière page de noms
-                $nRows = $ch['rows']->count();
+        $nPages = count($d['dpages']);
+        foreach ($d['dpages'] as $pIdx => $pg) {
+            foreach ($pg['runs'] as $run) {
+                if ($run['label']) $sec->addText(mb_strtoupper($run['label']), ['bold' => true], ['spaceBefore' => 120]);
+                $nIt = count($run['items']);
                 $t = $sec->addTable('grid');
                 $h = $t->addRow(null, ['tblHeader' => true]);
                 foreach ([[900, 'N° d’ordre'], [600, 'n°'], [4700, 'NOM ET PRENOMS'], [1200, 'IM'], [2400, 'LOCALITE DE SERVICE']] as [$wd, $tx])
                     $h->addCell($wd)->addText($tx, ['bold' => true, 'size' => 10], ['alignment' => 'center', 'spaceAfter' => 0]);
-                foreach ($ch['rows'] as $k => $a) {
-                    // les 2 derniers noms restent avec l'arrêtage, les articles et la signature (keepNext)
-                    $kn = $isFinal && $k >= $nRows - 2;
+                foreach ($run['items'] as $k => $it) {
+                    // les derniers noms restent avec l'arrêtage, les articles et la signature (keepNext)
+                    $kn = $run['final'] && $k >= $nIt - $run['keep'];
                     $row = $t->addRow(null, ['cantSplit' => true]);
-                    $row->addCell(900)->addText((string) ($ch['offset'] + $k + 1), ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0, 'keepNext' => $kn]);
-                    $row->addCell(600)->addText((string) (($bk['g'] ? $ch['local'] : 0) + $k + 1), ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0, 'keepNext' => $kn]);
-                    $row->addCell(4700)->addText($a->name, ['size' => 10], ['spaceAfter' => 0, 'keepNext' => $kn]);
-                    $row->addCell(1200)->addText((string) $a->im, ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0, 'keepNext' => $kn]);
-                    $row->addCell(2400)->addText((string) $a->locality, ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0, 'keepNext' => $kn]);
+                    $row->addCell(900)->addText((string) $it['g'], ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0, 'keepNext' => $kn]);
+                    $row->addCell(600)->addText((string) ($d['quarantine'] ? $it['l'] : $k + 1), ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0, 'keepNext' => $kn]);
+                    $row->addCell(4700)->addText($it['ag']->name, ['size' => 10], ['spaceAfter' => 0, 'keepNext' => $kn]);
+                    $row->addCell(1200)->addText((string) $it['ag']->im, ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0, 'keepNext' => $kn]);
+                    $row->addCell(2400)->addText((string) $it['ag']->locality, ['size' => 10], ['alignment' => 'center', 'spaceAfter' => 0, 'keepNext' => $kn]);
                 }
-                $tail = ($bk['g'] && $i === $last) ? $this->docs->groupTail($bk['g']) : $this->docs->pageTail($ch);
-                $sec->addText($tail, ['bold' => true, 'italic' => true, 'size' => 10], ['keepNext' => $isFinal]);
-                if ($i < $last) $sec->addPageBreak();
+                $sec->addText($run['tail'], ['bold' => true, 'italic' => true, 'size' => 10], ['keepNext' => $run['final'] || $run['tail2'] !== '']);
+                if ($run['tail2'] !== '') $sec->addText($run['tail2'], ['bold' => true, 'italic' => true, 'size' => 10], ['keepNext' => $run['final']]);
             }
+            if ($pIdx < $nPages - 1) $sec->addPageBreak();
         }
         $sec->addText("ARRETEE LA PRESENTE DECISION AU NOMBRE DE {$d['nWords']} ({$d['n']}) AGENTS.", ['bold' => true], ['keepNext' => true]);
         foreach ($this->docs->articles($d) as $art) {
@@ -299,7 +294,7 @@ class DocumentExporter
                 for ($k = 0; $k < $cols; $k++) $row->addCell($dayW)->addText('', ['size' => 9]);
             }
             $sec->addTextBreak(1);
-            $sec->addText($s['place'] . ', le ' . ($s['decision_date'] ?: ''), [], ['alignment' => 'left']);
+            $sec->addText($s['place'] . ', le ' . ($s['decision_date'] ?: '……………………'), [], ['alignment' => 'right', 'spaceBefore' => 200]);
         }
     }
 
@@ -648,7 +643,8 @@ class DocumentExporter
                 $row++;
             }
             $this->box($sh, "A$top:{$last}" . max($row - 1, $top + 1));
-            $sh->setCellValue('A' . ($row + 1), $s['place'] . ', le ' . ($s['decision_date'] ?: ''));
+            $sh->setCellValue($last . ($row + 1), $s['place'] . ', le ' . ($s['decision_date'] ?: '……………………'));   // à droite, en fin de page
+            $sh->getStyle($last . ($row + 1))->getAlignment()->setHorizontal('right');
             $sh->getPageSetup()->setRowsToRepeatAtTopByStartAndEnd($top, $top + 1);
             $this->setup($sh, true);
         }

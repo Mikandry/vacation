@@ -16,15 +16,24 @@
   <div class="col-md-3"><label class="form-label">Ordre de traitement</label><input type="number" name="position" class="form-control" value="{{ old('position',$a->position) }}"></div>
   <div class="col-md-3 d-flex align-items-end"><div class="form-check"><input type="checkbox" class="form-check-input" name="active" value="1" id="act" @checked(old('active',$a->active))><label for="act" class="form-check-label">Activité active</label></div></div>
 
+ <div class="col-md-6"><label class="form-label">Sous-groupes de l’activité</label>
+  <select name="group_type" id="gtype" class="form-select">
+   <option value="">Automatique (d’après le nom : quarantaine, dispatching, correction…)</option>
+   <option value="NONE" @selected(old('group_type',$a->group_type)==='NONE')>Aucun sous-groupe</option>
+   @foreach(\App\Models\Activity::KIND_LABELS as $k=>$lb)<option value="{{ $k }}" @selected(old('group_type',$a->group_type)===$k)>{{ $lb }}</option>@endforeach
+  </select></div>
+
  <div class="col-12" id="subbox" style="display:none">
   <div class="card card-body bg-light">
-   <div class="fw-bold mb-1">Quarantaine : répartition des agents en sous-groupes</div>
-   <div class="small text-muted mb-2">La somme des 4 sous-groupes doit être égale au nombre total d’agents de l’activité (« Total agents prévu par le décret », sinon « Quota direction ») et ne peut pas le dépasser.</div>
-   <div class="row g-2">
-    @foreach(\App\Models\Activity::SUBGROUPS as $k=>$label)
-    <div class="col-6 col-md-3"><label class="form-label">{{ $label }}</label><input type="number" min="0" name="sub[{{ $k }}]" class="form-control sub" value="{{ old('sub.'.$k, $a->subgroup_counts[$k] ?? 0) }}"></div>
+   <div class="fw-bold mb-1">Répartition des agents en sous-groupes</div>
+   <div class="small text-muted mb-2">Effectif prévu par sous-groupe (0 = pas de limite : vous choisissez le rôle de chacun dans « Choisir les agents »). La somme ne peut pas dépasser le nombre total d’agents de l’activité (« Total agents prévu par le décret », sinon « Quota direction »).</div>
+   @foreach(\App\Models\Activity::KINDS as $kind=>$defs)
+   <div class="row g-2 kindrow" data-kind="{{ $kind }}" style="display:none">
+    @foreach($defs as $k=>$label)
+    <div class="col-6 col-md-3"><label class="form-label">{{ $label }}</label><input type="number" min="0" name="sub[{{ $k }}]" class="form-control sub" value="{{ old('sub.'.$k, ($a->subgroups[$k] ?? 0)) }}"></div>
     @endforeach
    </div>
+   @endforeach
    <div class="mt-2 small" id="subinfo"></div>
    @error('sub')<div class="text-danger small fw-bold">{{ $message }}</div>@enderror
   </div>
@@ -35,20 +44,32 @@
 @endsection
 @push('scripts')
 <script>
-const f=document.querySelector('form.card'), box=document.getElementById('subbox'), info=document.getElementById('subinfo');
-const norm=t=>t.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+const f=document.querySelector('form.card'), box=document.getElementById('subbox'), info=document.getElementById('subinfo'), gt=document.getElementById('gtype');
+const norm=t=>t.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
 function cap(){ const d=parseInt(f.elements['decree_total'].value)||0; return d>0?d:(parseInt(f.elements['quota'].value)||0); }
+function kind(){
+ if(gt.value==='NONE') return null;
+ if(gt.value) return gt.value;
+ const n=norm(f.elements['name'].value), c=norm(f.elements['code'].value);
+ if((n+' '+c).includes('quarantaine')) return 'QUARANTAINE';
+ if((n+' '+c).includes('dispatching')) return 'DISPATCHING';
+ if(n.startsWith('correction')||c.startsWith('correction')) return 'CORRECTION';
+ return null;
+}
+function inputs(k){ return [...document.querySelectorAll('.kindrow[data-kind="'+k+'"] .sub')]; }
 function upd(){
- const q=norm(f.elements['code'].value+' '+f.elements['name'].value).includes('quarantaine');
- box.style.display=q?'':'none';
- if(!q) return;
- const sum=[...document.querySelectorAll('.sub')].reduce((a,i)=>a+(parseInt(i.value)||0),0), c=cap();
- info.className='mt-2 small fw-bold '+(sum>c?'text-danger':(sum===c?'text-success':'text-warning'));
- info.textContent='Total réparti : '+sum+' / '+c+(sum>c?' — dépasse le nombre d’agents !':(sum===c?' — OK':' — il reste '+(c-sum)+' à répartir'));
+ const k=kind();
+ box.style.display=k?'':'none';
+ document.querySelectorAll('.kindrow').forEach(r=>r.style.display=(r.dataset.kind===k)?'':'none');
+ if(!k) return;
+ const sum=inputs(k).reduce((a,i)=>a+(parseInt(i.value)||0),0), c=cap();
+ info.className='mt-2 small fw-bold '+((c>0&&sum>c)?'text-danger':(sum===0?'text-muted':(sum===c?'text-success':'text-warning')));
+ info.textContent=sum===0?'Aucune limite : vous choisirez le rôle de chaque agent dans « Choisir les agents ».':'Total réparti : '+sum+' / '+c+((c>0&&sum>c)?' — dépasse le nombre d’agents !':(sum===c?' — OK':' — il reste '+(c-sum)+' à répartir'));
 }
 ['code','name','decree_total','quota'].forEach(n=>f.elements[n].addEventListener('input',upd));
+gt.addEventListener('change',upd);
 document.querySelectorAll('.sub').forEach(i=>i.addEventListener('input',upd));
-f.addEventListener('submit',e=>{ if(box.style.display!=='none'){const sum=[...document.querySelectorAll('.sub')].reduce((a,i)=>a+(parseInt(i.value)||0),0); if(sum>cap()){e.preventDefault(); alert('La somme des sous-groupes dépasse le nombre total d’agents.');}}});
+f.addEventListener('submit',e=>{ const k=kind(); if(k){ const sum=inputs(k).reduce((a,i)=>a+(parseInt(i.value)||0),0); if(cap()>0&&sum>cap()){e.preventDefault(); alert('La somme des sous-groupes dépasse le nombre total d’agents.');} } });
 upd();
 </script>
 @endpush
