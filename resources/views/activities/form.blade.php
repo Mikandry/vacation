@@ -16,26 +16,43 @@
   <div class="col-md-3"><label class="form-label">Ordre de traitement</label><input type="number" name="position" class="form-control" value="{{ old('position',$a->position) }}"></div>
   <div class="col-md-3 d-flex align-items-end"><div class="form-check"><input type="checkbox" class="form-check-input" name="active" value="1" id="act" @checked(old('active',$a->active))><label for="act" class="form-check-label">Activité active</label></div></div>
 
- <div class="col-md-6"><label class="form-label">Sous-groupes de l’activité</label>
-  <select name="group_type" id="gtype" class="form-select">
-   <option value="">Automatique (d’après le nom : quarantaine, dispatching, correction…)</option>
-   <option value="NONE" @selected(old('group_type',$a->group_type)==='NONE')>Aucun sous-groupe</option>
-   @foreach(\App\Models\Activity::KIND_LABELS as $k=>$lb)<option value="{{ $k }}" @selected(old('group_type',$a->group_type)===$k)>{{ $lb }}</option>@endforeach
-  </select></div>
+  <div class="col-md-6"><label class="form-label">Examen</label>
+   <select name="exam_id" class="form-select">
+    <option value="">— aucun —</option>
+    @foreach($exams as $e)<option value="{{ $e->id }}" @selected((string) old('exam_id',$a->exam_id)===(string) $e->id)>{{ $e->code }} — {{ $e->name }}</option>@endforeach
+   </select>
+   <div class="form-text">Pour distinguer « Quarantaine BEPC » de « Quarantaine CEPE ». Les examens se gèrent dans le menu « Examens ». Dans l’intitulé, <code>{examen}</code> est remplacé par le nom complet de l’examen.</div></div>
 
- <div class="col-12" id="subbox" style="display:none">
+ @php
+  $sgRows = [];
+  if (old('sg_name') !== null) {
+    foreach ((array) old('sg_name') as $i => $nm) $sgRows[] = ['id' => old('sg_id.'.$i), 'name' => $nm, 'planned' => old('sg_planned.'.$i)];
+  } else {
+    foreach ($a->exists ? $a->groups : [] as $g) $sgRows[] = ['id' => $g->id, 'name' => $g->name, 'planned' => $g->planned];
+  }
+ @endphp
+ <div class="col-12">
   <div class="card card-body bg-light">
-   <div class="fw-bold mb-1">Répartition des agents en sous-groupes</div>
-   <div class="small text-muted mb-2">Effectif prévu par sous-groupe (0 = pas de limite : vous choisissez le rôle de chacun dans « Choisir les agents »). La somme ne peut pas dépasser le nombre total d’agents de l’activité (« Total agents prévu par le décret », sinon « Quota direction »).</div>
-   @foreach(\App\Models\Activity::KINDS as $kind=>$defs)
-   <div class="row g-2 kindrow" data-kind="{{ $kind }}" style="display:none">
-    @foreach($defs as $k=>$label)
-    <div class="col-6 col-md-3"><label class="form-label">{{ $label }}</label><input type="number" min="0" name="sub[{{ $k }}]" class="form-control sub" value="{{ old('sub.'.$k, ($a->subgroups[$k] ?? 0)) }}"></div>
+   <div class="fw-bold mb-1">Sous-groupes de l’activité (facultatif)</div>
+   <div class="small text-muted mb-2">Si l’activité comporte des rôles (ex. Superviseur, Agent de sécurité), ajoutez-les ici : la décision, la note, la présence, l’état et le décompte se divisent alors automatiquement par sous-groupe, dans l’ordre ci-dessous. Sans sous-groupe, rien ne change. L’effectif prévu est facultatif (0 = pas de limite) ; leur somme ne peut pas dépasser le nombre total d’agents de l’activité. Le rôle de chaque agent se choisit dans « Choisir les agents ».</div>
+   <div class="mb-2 small">Modèles :
+    @foreach(\App\Models\Activity::TEMPLATES as $tn=>$names)<button type="button" class="btn btn-sm btn-outline-secondary tpl" data-names="{{ json_encode($names, JSON_UNESCAPED_UNICODE) }}">{{ $tn }}</button> @endforeach
+   </div>
+   <div id="sglist">
+    @foreach($sgRows as $row)
+    <div class="input-group input-group-sm mb-1 sgrow">
+     <input type="hidden" name="sg_id[]" value="{{ $row['id'] }}">
+     <input name="sg_name[]" class="form-control" placeholder="Nom du sous-groupe" value="{{ $row['name'] }}">
+     <input type="number" min="0" name="sg_planned[]" class="form-control sgp" style="max-width:120px" placeholder="effectif" value="{{ $row['planned'] }}">
+     <button type="button" class="btn btn-outline-secondary sgup" title="Monter">↑</button>
+     <button type="button" class="btn btn-outline-secondary sgdown" title="Descendre">↓</button>
+     <button type="button" class="btn btn-outline-danger sgdel" title="Supprimer">✕</button>
+    </div>
     @endforeach
    </div>
-   @endforeach
+   <div><button type="button" class="btn btn-sm btn-outline-primary" id="sgadd">+ Ajouter un sous-groupe</button></div>
    <div class="mt-2 small" id="subinfo"></div>
-   @error('sub')<div class="text-danger small fw-bold">{{ $message }}</div>@enderror
+   @error('sg')<div class="text-danger small fw-bold">{{ $message }}</div>@enderror
   </div>
  </div>
  </div>
@@ -44,32 +61,38 @@
 @endsection
 @push('scripts')
 <script>
-const f=document.querySelector('form.card'), box=document.getElementById('subbox'), info=document.getElementById('subinfo'), gt=document.getElementById('gtype');
-const norm=t=>t.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+const f=document.querySelector('form.card'), list=document.getElementById('sglist'), info=document.getElementById('subinfo');
 function cap(){ const d=parseInt(f.elements['decree_total'].value)||0; return d>0?d:(parseInt(f.elements['quota'].value)||0); }
-function kind(){
- if(gt.value==='NONE') return null;
- if(gt.value) return gt.value;
- const n=norm(f.elements['name'].value), c=norm(f.elements['code'].value);
- if((n+' '+c).includes('quarantaine')) return 'QUARANTAINE';
- if((n+' '+c).includes('dispatching')) return 'DISPATCHING';
- if(n.startsWith('correction')||c.startsWith('correction')) return 'CORRECTION';
- return null;
+function esc(t){ return String(t??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+function rowHtml(id,name,planned){
+ return '<div class="input-group input-group-sm mb-1 sgrow"><input type="hidden" name="sg_id[]" value="'+esc(id)+'">'
+  +'<input name="sg_name[]" class="form-control" placeholder="Nom du sous-groupe" value="'+esc(name)+'">'
+  +'<input type="number" min="0" name="sg_planned[]" class="form-control sgp" style="max-width:120px" placeholder="effectif" value="'+esc(planned)+'">'
+  +'<button type="button" class="btn btn-outline-secondary sgup" title="Monter">↑</button><button type="button" class="btn btn-outline-secondary sgdown" title="Descendre">↓</button>'
+  +'<button type="button" class="btn btn-outline-danger sgdel" title="Supprimer">✕</button></div>';
 }
-function inputs(k){ return [...document.querySelectorAll('.kindrow[data-kind="'+k+'"] .sub')]; }
 function upd(){
- const k=kind();
- box.style.display=k?'':'none';
- document.querySelectorAll('.kindrow').forEach(r=>r.style.display=(r.dataset.kind===k)?'':'none');
- if(!k) return;
- const sum=inputs(k).reduce((a,i)=>a+(parseInt(i.value)||0),0), c=cap();
+ const rows=[...list.querySelectorAll('.sgrow')];
+ const sum=rows.reduce((a,r)=>a+(parseInt(r.querySelector('.sgp').value)||0),0), c=cap();
+ if(!rows.length){ info.textContent=''; return; }
  info.className='mt-2 small fw-bold '+((c>0&&sum>c)?'text-danger':(sum===0?'text-muted':(sum===c?'text-success':'text-warning')));
- info.textContent=sum===0?'Aucune limite : vous choisirez le rôle de chaque agent dans « Choisir les agents ».':'Total réparti : '+sum+' / '+c+((c>0&&sum>c)?' — dépasse le nombre d’agents !':(sum===c?' — OK':' — il reste '+(c-sum)+' à répartir'));
+ info.textContent=sum===0?'Aucune limite d’effectif : vous choisirez le rôle de chaque agent dans « Choisir les agents ».':'Total prévu : '+sum+(c>0?' / '+c:'')+((c>0&&sum>c)?' — dépasse le nombre d’agents !':(c>0&&sum<c?' — il reste '+(c-sum)+' à répartir':''));
 }
-['code','name','decree_total','quota'].forEach(n=>f.elements[n].addEventListener('input',upd));
-gt.addEventListener('change',upd);
-document.querySelectorAll('.sub').forEach(i=>i.addEventListener('input',upd));
-f.addEventListener('submit',e=>{ const k=kind(); if(k){ const sum=inputs(k).reduce((a,i)=>a+(parseInt(i.value)||0),0); if(cap()>0&&sum>cap()){e.preventDefault(); alert('La somme des sous-groupes dépasse le nombre total d’agents.');} } });
+document.getElementById('sgadd').addEventListener('click',()=>{ list.insertAdjacentHTML('beforeend',rowHtml('','','')); upd(); list.lastElementChild.querySelector('[name="sg_name[]"]').focus(); });
+list.addEventListener('click',e=>{
+ const row=e.target.closest('.sgrow'); if(!row) return;
+ if(e.target.classList.contains('sgdel')){ if(!row.querySelector('[name="sg_id[]"]').value || confirm('Supprimer ce sous-groupe ? Les agents qui y sont affectés deviendront « non répartis ».')) row.remove(); }
+ if(e.target.classList.contains('sgup') && row.previousElementSibling) row.parentNode.insertBefore(row,row.previousElementSibling);
+ if(e.target.classList.contains('sgdown') && row.nextElementSibling) row.parentNode.insertBefore(row.nextElementSibling,row);
+ upd();
+});
+list.addEventListener('input',upd);
+document.querySelectorAll('.tpl').forEach(b=>b.addEventListener('click',()=>{
+ if(list.children.length && !confirm('Remplacer la liste actuelle par ce modèle ?')) return;
+ list.innerHTML=JSON.parse(b.dataset.names).map(n=>rowHtml('',n,'')).join(''); upd();
+}));
+['decree_total','quota'].forEach(n=>f.elements[n].addEventListener('input',upd));
+f.addEventListener('submit',e=>{ const sum=[...list.querySelectorAll('.sgp')].reduce((a,i)=>a+(parseInt(i.value)||0),0); if(cap()>0&&sum>cap()){e.preventDefault(); alert('La somme des sous-groupes dépasse le nombre total d’agents.');} });
 upd();
 </script>
 @endpush

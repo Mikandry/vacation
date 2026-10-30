@@ -4,6 +4,14 @@
 <h4>Documents à générer</h4>
 <p class="text-muted small">Pour chaque document : <b>👁 Aperçu</b> (vérifier avant de télécharger), puis PDF, Word ou Excel.</p>
 
+<form method="get" class="d-flex align-items-center gap-2 mb-2">
+ <label class="small text-muted mb-0">Examen :</label>
+ <select name="exam" class="form-select form-select-sm" style="max-width:260px" onchange="this.form.submit()">
+  <option value="">Tous les examens</option>
+  @foreach($exams as $e)<option value="{{ $e->id }}" @selected((string)$examFilter===(string)$e->id)>{{ $e->code }}</option>@endforeach
+  <option value="none" @selected($examFilter==='none')>Sans examen</option>
+ </select>
+</form>
 <div class="input-group input-group-sm mb-3" style="max-width:280px">
  <span class="input-group-text">Taux IRSA (%)</span>
  <input id="irsa" type="number" step="0.1" min="0" max="100" class="form-control" value="{{ $irsa }}">
@@ -14,7 +22,7 @@
  @foreach(\App\Services\DocumentExporter::TITLES as $t)<th class="text-center">{{ $t }}</th>@endforeach</tr></thead>
 @foreach($acts as $a)
 <tr class="{{ $a->active?'':'text-muted' }}">
- <td><b>{{ $a->code }}</b><br><small>{{ $a->name }} — {{ $a->days }} j × {{ number_format($a->rate,0,',',' ') }} Ar</small>
+ <td><b>{{ $a->code }}</b>@if($a->exam) <span class="badge text-bg-primary">{{ $a->exam->code }}</span>@endif<br><small>{{ $a->name }} — {{ $a->days }} j × {{ number_format($a->rate,0,',',' ') }} Ar</small>
   <br><a class="small" href="{{ route('choix.show',$a) }}">✎ choisir les agents</a></td>
  <td>{{ $a->assignments_count }}</td>
  @foreach(array_keys(\App\Services\DocumentExporter::TITLES) as $t)

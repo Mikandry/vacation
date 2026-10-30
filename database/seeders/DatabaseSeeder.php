@@ -27,6 +27,12 @@ class DatabaseSeeder extends Seeder
         foreach ($acts as $i => [$code, $name, $title, $days, $rate, $dec, $quota])
             Activity::updateOrCreate(['code' => $code], compact('name', 'title', 'days', 'rate', 'quota') + ['decree_total' => $dec, 'position' => $i + 1, 'active' => true]);
 
+        // examens : rattachement des activités d'après leur intitulé (modifiable ensuite dans le menu « Examens »)
+        foreach ([['BEPC', $bepc, 1], ['CEPE', $cepe, 2]] as [$ecode, $ename, $epos]) {
+            $exam = \App\Models\Exam::firstOrCreate(['code' => $ecode], ['name' => $ename, 'position' => $epos]);
+            \App\Models\Activity::whereNull('exam_id')->where('title', 'like', "%($ecode%")->update(['exam_id' => $exam->id]);
+        }
+
         if (Visa::count() === 0) {
             $visas = [
 "Vu la Constitution ;",

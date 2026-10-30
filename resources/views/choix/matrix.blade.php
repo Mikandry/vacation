@@ -19,7 +19,7 @@
 <table class="table table-sm table-bordered bg-white sticky" id="grid">
  <thead><tr><th>Nom et prénoms</th><th>Type</th><th>Localité</th><th>IM</th>
   @foreach($acts as $a)
-  <th class="text-center"><a class="text-white" href="{{ route('choix.show',$a) }}">{{ $a->code }}</a>
+  <th class="text-center"><a class="text-white" href="{{ route('choix.show',$a) }}">{{ $a->code }}</a>@if($a->exam) <span class="badge bg-light text-dark">{{ $a->exam->code }}</span>@endif
    @if($a->manual)<span class="badge bg-warning text-dark">manuel</span>@endif<br>
    <small class="cnt" data-act="{{ $a->id }}" data-quota="{{ $a->quota }}" data-manual="{{ $a->manual?1:0 }}"></small></th>
   @endforeach</tr></thead>

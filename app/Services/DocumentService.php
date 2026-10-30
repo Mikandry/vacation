@@ -251,6 +251,12 @@ class DocumentService
     private function build(Activity $activity, $agents, array $opt, ?array $sub): array
     {
         $s = Setting::all_();
+        // réglages propres à l'examen de l'activité (session, arrêté des taux, n° de décision) ; vide = Paramètres
+        if ($ex = $activity->exam) {
+            foreach (['session', 'ref_arrete', 'decision_number'] as $k) {
+                if (filled($ex->$k)) $s[$k] = (string) $ex->$k;
+            }
+        }
         $n = $agents->count();
 
         // ---- décision : pages de 30 puis 34 lignes
@@ -310,7 +316,7 @@ class DocumentService
             'dec' => $dec,
             'totalGross' => $cum['g'], 'totalIrsa' => $cum['i'], 'totalNet' => $cum['n'],
             'totalNetWords' => mb_strtoupper(Words::of($cum['n'])),
-            'file' => Str::slug($activity->code . '-' . $s['session']),
+            'file' => Str::slug($activity->code . '-' . optional($activity->exam)->code . '-' . $s['session']),
         ];
     }
 
@@ -352,10 +358,12 @@ class DocumentService
         $suf = $sub ? ' – ' . $sub : '';   // « Quarantaine – Superviseur »
         return strtr($tpl, [
             '{sousgroupe}' => (string) $sub,
-            '{activite}' => (string) $a->name . $suf,
+            '{activite}' => $a->display_name . $suf,
+            '{examen}' => (string) optional($a->exam)->name,
+            '{examen_code}' => (string) optional($a->exam)->code,
             '{code}' => (string) $a->code . $suf,
-            '{titre}' => (string) $a->title . $suf,
-            '{TITRE}' => mb_strtoupper((string) $a->title . $suf),
+            '{titre}' => $this->activityTitle($a) . $suf,
+            '{TITRE}' => mb_strtoupper($this->activityTitle($a) . $suf),
             '{session}' => (string) $s['session'],
             '{jours}' => (string) $a->days,
             '{agents}' => (string) $d['n'],
@@ -378,6 +386,13 @@ class DocumentService
         ]);
     }
 
+    /** Intitulé de l'activité : « {examen} » = nom complet de l'examen, « {examen_code} » = son code. */
+    public function activityTitle(Activity $a): string
+    {
+        $ex = $a->exam;
+        return strtr((string) $a->title, ['{examen}' => (string) optional($ex)->name, '{examen_code}' => (string) optional($ex)->code]);
+    }
+
     /** N° de la décision : Laravel retire les espaces de début de champ ; on remet un blanc visible devant « -2026/MEN ». */
     public function decisionNumber(array $d): string
     {
@@ -389,7 +404,7 @@ class DocumentService
     public function decisionTitle(array $d): string
     {
         return 'DECISION N° ' . $this->decisionNumber($d) . ' portant désignation des Agents Fonctionnaires pour les travaux de '
-            . $d['a']->title . '.';
+            . $this->activityTitle($d['a']) . '.';
     }
     /** « SESSION 2026 » : ligne centrée sous le titre de la décision. */
     public function decisionSession(array $d): string
@@ -399,7 +414,7 @@ class DocumentService
     public function article1(array $d): string
     {
         return 'Article Premier : Les fonctionnaires dont les noms suivants sont désignés membres des commissions chargées des travaux de '
-            . $d['a']->title . ', session ' . $d['s']['session'] . ' :';
+            . $this->activityTitle($d['a']) . ', session ' . $d['s']['session'] . ' :';
     }
     public function article2(array $d): string
     {

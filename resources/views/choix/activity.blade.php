@@ -157,7 +157,7 @@ none.onclick=()=>{
 recount();
 
 @if($act->is_quarantine)
-const PLAN={!! json_encode($act->subgroup_counts) !!}, CAP={{ $act->agent_cap }};
+const PLAN={!! json_encode((object) $act->subgroup_counts) !!}, CAP={{ $act->agent_cap }};
 function recountSg(){
  const c={}; Object.keys(PLAN).forEach(k=>c[k]=0); let none=0;
  rows.forEach(r=>{

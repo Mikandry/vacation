@@ -2,6 +2,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\Activity;
+use App\Models\ActivitySubgroup;
+use App\Models\AgentSubgroup;
+use App\Models\Exam;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
@@ -21,37 +24,45 @@ class ActivityController extends Controller
             'note_number' => 'nullable|string|max:120',
             'position' => 'nullable|integer|min:0',
             'active' => 'nullable|boolean',
-            'group_type' => 'nullable|in:NONE,QUARANTAINE,DISPATCHING,CORRECTION',
-            'sub' => 'nullable|array',
-            'sub.*' => 'nullable|integer|min:0',
+            'exam_id' => 'nullable|integer|exists:exams,id',
+            'sg_id' => 'nullable|array',
+            'sg_name' => 'nullable|array',
+            'sg_planned' => 'nullable|array',
+            'sg_planned.*' => 'nullable|integer|min:0',
         ];
     }
 
     public function index()
     {
-        return view('activities.index', ['activities' => Activity::orderBy('position')->orderBy('id')->get()]);
+        $exam = request('exam');
+        $q = Activity::with(['exam', 'groups'])->orderBy('position')->orderBy('id');
+        if ($exam === 'none') $q->whereNull('exam_id');
+        elseif ($exam) $q->where('exam_id', (int) $exam);
+        return view('activities.index', ['activities' => $q->get(), 'exams' => Exam::orderBy('position')->orderBy('code')->get(), 'examFilter' => $exam]);
     }
 
     public function create()
     {
         $a = new Activity(['days' => 10, 'rate' => 36000, 'quota' => 0, 'active' => true, 'position' => (Activity::max('position') ?? 0) + 1]);
-        return view('activities.form', ['a' => $a]);
+        return view('activities.form', ['a' => $a, 'exams' => Exam::orderBy('position')->orderBy('code')->get()]);
     }
 
     public function store(Request $r)
     {
-        Activity::create($this->data($r));
+        $activity = Activity::create($this->data($r));
+        $this->syncGroups($activity, $r);
         return redirect()->route('activities.index')->with('ok', 'Activité ajoutée. Relancez la répartition pour la prendre en compte.');
     }
 
     public function edit(Activity $activity)
     {
-        return view('activities.form', ['a' => $activity]);
+        return view('activities.form', ['a' => $activity, 'exams' => Exam::orderBy('position')->orderBy('code')->get()]);
     }
 
     public function update(Request $r, Activity $activity)
     {
         $activity->update($this->data($r));
+        $this->syncGroups($activity, $r);
         return redirect()->route('activities.index')->with('ok', 'Activité modifiée. Relancez la répartition.');
     }
 
@@ -68,21 +79,43 @@ class ActivityController extends Controller
         $d['decree_total'] = $d['decree_total'] ?? 0;
         $d['position'] = $d['position'] ?? 0;
 
-        // ---- sous-groupes (quarantaine, dispatching, correction) : effectifs prévus, 0 = pas de limite
-        $d['group_type'] = $d['group_type'] ?: null;
-        $probe = new Activity(['code' => $d['code'], 'name' => $d['name'], 'group_type' => $d['group_type']]);
-        $d['subgroups'] = null;
-        if ($probe->has_subgroups) {
-            $sub = [];
-            foreach (array_keys($probe->subgroup_defs) as $k) $sub[$k] = (int) ($d['sub'][$k] ?? 0);
-            $cap = (int) ($d['decree_total'] > 0 ? $d['decree_total'] : $d['quota']);
-            $sum = array_sum($sub);
-            if ($sum > $cap) {
-                throw ValidationException::withMessages(['sub' => "La somme des sous-groupes ($sum) dépasse le nombre total d’agents de l’activité ($cap)."]);
-            }
-            $d['subgroups'] = $sub;
+        $d['exam_id'] = $d['exam_id'] ?? null;
+
+        // ---- sous-groupes libres : la somme des effectifs prévus ne dépasse pas le nombre d'agents de l'activité
+        $cap = (int) ($d['decree_total'] > 0 ? $d['decree_total'] : $d['quota']);
+        $sum = 0;
+        foreach ((array) $r->input('sg_name', []) as $i => $name) {
+            if (trim((string) $name) !== '') $sum += (int) ($r->input('sg_planned', [])[$i] ?? 0);
         }
-        unset($d['sub']);
+        if ($cap > 0 && $sum > $cap) {
+            throw ValidationException::withMessages(['sg' => "La somme des sous-groupes ($sum) dépasse le nombre total d’agents de l’activité ($cap)."]);
+        }
+        unset($d['sg_id'], $d['sg_name'], $d['sg_planned']);
         return $d;
+    }
+
+    /** Enregistre la liste des sous-groupes du formulaire : ajoute, renomme, réordonne, supprime. */
+    private function syncGroups(Activity $activity, Request $r): void
+    {
+        $ids = (array) $r->input('sg_id', []);
+        $names = (array) $r->input('sg_name', []);
+        $planned = (array) $r->input('sg_planned', []);
+        $keep = [];
+        $pos = 0;
+        foreach ($names as $i => $name) {
+            $name = trim((string) $name);
+            if ($name === '') continue;
+            $data = ['name' => $name, 'planned' => max(0, (int) ($planned[$i] ?? 0)), 'position' => ++$pos];
+            $id = (int) ($ids[$i] ?? 0);
+            $g = $id ? ActivitySubgroup::where('activity_id', $activity->id)->find($id) : null;
+            if ($g) { $g->update($data); } else { $g = ActivitySubgroup::create($data + ['activity_id' => $activity->id]); }
+            $keep[] = $g->id;
+        }
+        // sous-groupes supprimés : leurs agents redeviennent « non répartis »
+        $removed = ActivitySubgroup::where('activity_id', $activity->id)->whereNotIn('id', $keep)->pluck('id');
+        if ($removed->count()) {
+            AgentSubgroup::where('activity_id', $activity->id)->whereIn('subgroup', $removed->map(fn($i) => (string) $i)->all())->delete();
+            ActivitySubgroup::whereIn('id', $removed)->delete();
+        }
     }
 }

@@ -1,5 +1,5 @@
 <?php
-use App\Http\Controllers\{ActivityController, AgentController, ConflictController, DashboardController, DistributionController, DocumentController, ExceptionController, IssueController, ManualController, SettingController, VisaController};
+use App\Http\Controllers\{ActivityController, AgentController, ConflictController, DashboardController, DistributionController, DocumentController, ExamController, ExceptionController, IssueController, ManualController, SettingController, VisaController};
 use Illuminate\Support\Facades\Route;
 
 // Pour protéger l'application : installer Laravel Breeze puis remplacer [] par ['auth'].
@@ -17,6 +17,9 @@ Route::middleware([])->group(function () {
     Route::post('/repartition/redraw', [DistributionController::class, 'redraw'])->name('distribution.redraw');
     Route::post('/repartition/archive', [DistributionController::class, 'archive'])->name('distribution.archive');
     Route::get('/repartition/recap.{format}', [DistributionController::class, 'recap'])->name('distribution.recap');
+
+    // ---- examens (BEPC, CEPE, CAP/EP…)
+    Route::resource('exams', ExamController::class)->only(['index', 'store', 'update', 'destroy']);
 
     // ---- activités
     Route::resource('activities', ActivityController::class)->except('show');

@@ -8,6 +8,7 @@
   ]],
   ['Données', [
     ['agents.index', 'bi-people', 'Agents', 'agents.*'],
+    ['exams.index', 'bi-mortarboard', 'Examens', 'exams.*'],
     ['activities.index', 'bi-list-check', 'Activités', 'activities.*'],
   ]],
   ['Répartition', [

@@ -2,9 +2,17 @@
 @section('title','Activités')
 @section('content')
 <div class="d-flex mb-3"><h4 class="me-auto">Activités</h4><a class="btn btn-primary" href="{{ route('activities.create') }}">+ Ajouter une activité</a></div>
+<form method="get" class="d-flex align-items-center gap-2 mb-2">
+ <label class="small text-muted mb-0">Examen :</label>
+ <select name="exam" class="form-select form-select-sm" style="max-width:260px" onchange="this.form.submit()">
+  <option value="">Tous les examens</option>
+  @foreach($exams as $e)<option value="{{ $e->id }}" @selected((string)$examFilter===(string)$e->id)>{{ $e->code }}</option>@endforeach
+  <option value="none" @selected($examFilter==='none')>Sans examen</option>
+ </select>
+</form>
 <p class="text-muted small">« Ordre » = ordre de traitement : mettre les activités les plus lourdes en premier donne un meilleur équilibre. Quota = nombre d’agents de votre direction.</p>
-<table class="table table-sm table-bordered bg-white align-middle"><thead class="table-dark"><tr><th>Ordre</th><th>Code</th><th>Activité</th><th>Jours</th><th>Taux/j</th><th>Montant/agent</th><th>Quota direction</th><th>Décret (total)</th><th>Début</th><th>Actif</th><th></th></tr></thead>
-@foreach($activities as $a)<tr class="{{ $a->active?'':'text-muted' }}"><td>{{ $a->position }}</td><td class="fw-bold">{{ $a->code }}</td><td>{{ $a->name }}</td><td>{{ $a->days }}</td><td class="text-end">{{ number_format($a->rate,0,',',' ') }}</td><td class="text-end">{{ number_format($a->amount,0,',',' ') }}</td><td>{{ $a->quota }}</td><td>{{ $a->decree_total }}</td><td>{{ optional($a->start_date)->format('d/m/Y') }}</td><td>{{ $a->active?'oui':'non' }}</td>
+<table class="table table-sm table-bordered bg-white align-middle"><thead class="table-dark"><tr><th>Ordre</th><th>Code</th><th>Examen</th><th>Activité</th><th>Jours</th><th>Taux/j</th><th>Montant/agent</th><th>Quota direction</th><th>Décret (total)</th><th>Début</th><th>Actif</th><th></th></tr></thead>
+@foreach($activities as $a)<tr class="{{ $a->active?'':'text-muted' }}"><td>{{ $a->position }}</td><td class="fw-bold">{{ $a->code }}</td><td>@if($a->exam)<span class="badge text-bg-primary">{{ $a->exam->code }}</span>@else<span class="text-muted">—</span>@endif</td><td>{{ $a->name }}@if($a->groups->count())<div class="small text-muted">{{ $a->groups->pluck('name')->implode(' · ') }}</div>@endif</td><td>{{ $a->days }}</td><td class="text-end">{{ number_format($a->rate,0,',',' ') }}</td><td class="text-end">{{ number_format($a->amount,0,',',' ') }}</td><td>{{ $a->quota }}</td><td>{{ $a->decree_total }}</td><td>{{ optional($a->start_date)->format('d/m/Y') }}</td><td>{{ $a->active?'oui':'non' }}</td>
  <td class="text-nowrap">
     <a class="btn btn-sm btn-outline-success" href="{{ route('choix.show',$a) }}">Choisir les agents</a>
     <a class="btn btn-sm btn-outline-primary" href="{{ route('activities.edit',$a) }}">Modifier</a>

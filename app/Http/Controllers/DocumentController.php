@@ -2,6 +2,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Activity;
+use App\Models\Exam;
 use App\Models\Setting;
 use App\Services\DocumentExporter;
 use App\Services\DocumentService;
@@ -12,8 +13,14 @@ class DocumentController extends Controller
 {
     public function index()
     {
-        $acts = Activity::withCount('assignments')->orderBy('position')->orderBy('id')->get();
-        return view('docs.index', ['acts' => $acts, 'irsa' => Setting::all_()['irsa_rate']]);
+        $exam = request('exam');
+        $q = Activity::with(['exam', 'groups'])->withCount('assignments')->orderBy('position')->orderBy('id');
+        if ($exam === 'none') $q->whereNull('exam_id');
+        elseif ($exam) $q->where('exam_id', (int) $exam);
+        return view('docs.index', [
+            'acts' => $q->get(), 'irsa' => Setting::all_()['irsa_rate'],
+            'exams' => Exam::orderBy('position')->orderBy('code')->get(), 'examFilter' => $exam,
+        ]);
     }
 
     /** Page d'aperçu : le PDF s'affiche dans la page, avec les options et les boutons de téléchargement. */
