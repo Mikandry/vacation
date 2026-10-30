@@ -91,7 +91,7 @@
    <td>{{ $ag->im }}</td>
    <td>{{ $ag->locality }}</td>
    <td><span class="badge text-bg-{{ $ag->type=='DIRECTION'?'primary':'info' }}">{{ $ag->type }}</span></td>
-   @if($act->is_quarantine)<td><select name="sub[{{ $ag->id }}]" class="form-select form-select-sm sg"><option value="">—</option>@foreach($act->subgroup_defs as $k=>$lb)<option value="{{ $k }}" @selected(($subMap[$ag->id] ?? null)===$k)>{{ $lb }}</option>@endforeach</select></td>@endif
+   @if($act->is_quarantine)<td><select name="sub[{{ $ag->id }}]" class="form-select form-select-sm sg"><option value="">—</option>@foreach($act->subgroup_defs as $k=>$lb)<option value="{{ $k }}" @selected((string) ($subMap[$ag->id] ?? '') === (string) $k)>{{ $lb }}</option>@endforeach</select></td>@endif
    <td class="small">{{ $ag->function }}</td>
    <td class="small">{{ $info[$ag->id]['codes'] }}</td>
    <td class="small text-danger fw-bold">{{ $info[$ag->id]['conflict'] }}</td>
